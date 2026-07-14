@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useAuthStore } from "../../store/authStore";
+import { useSignupMutation } from "../../hooks/useAuthMutations";
 
 /**
  * Docmind — Sign up
@@ -11,6 +12,11 @@ import { useState } from "react";
  * Mirrors the sign-in page 1:1 — same tokens, same brand panel,
  * same alien-touched illustration and doodle background — so the
  * two screens read as one continuous flow.
+ *
+ * All form state (name, email, password, confirm, visibility,
+ * agree-to-terms, submitting, error) lives in the shared
+ * `useAuthStore` (Zustand, sign-up slice) — this file only renders
+ * and wires up event handlers.
  */
 
 function EyeIcon({ off }: { off: boolean }) {
@@ -64,7 +70,7 @@ function LockIcon() {
  * from /public in your own project.
  */
 const logoDataUri =
-  "data:image/png;base64,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";
+  "data:image/png;base64,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";
 
 /**
  * Same alien-touched doodle tile used on the sign-in page — a few
@@ -132,34 +138,41 @@ const doodleSvgTile = `
 const doodleBackground = `url("data:image/svg+xml,${encodeURIComponent(doodleSvgTile)}")`;
 
 export default function SignupPage() {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [agree, setAgree] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
+  const name = useAuthStore((s) => s.signupName);
+  const email = useAuthStore((s) => s.signupEmail);
+  const password = useAuthStore((s) => s.signupPassword);
+  const confirm = useAuthStore((s) => s.signupConfirm);
+  const showPassword = useAuthStore((s) => s.showSignupPassword);
+  const agree = useAuthStore((s) => s.agree);
 
-  const passwordsMatch = confirm.length === 0 || confirm === password;
-  const canSubmit =
-    name.trim().length > 1 &&
-    email.trim().length > 3 &&
-    password.length >= 6 &&
-    confirm === password &&
-    agree;
+  const setName = useAuthStore((s) => s.setSignupName);
+  const setEmail = useAuthStore((s) => s.setSignupEmail);
+  const setPassword = useAuthStore((s) => s.setSignupPassword);
+  const setConfirm = useAuthStore((s) => s.setSignupConfirm);
+  const toggleShowPassword = useAuthStore((s) => s.toggleShowSignupPassword);
+  const setAgree = useAuthStore((s) => s.setAgree);
+  const passwordsMatch = useAuthStore((s) => s.passwordsMatch());
+  const canSubmit = useAuthStore((s) => s.canSubmitSignup());
+
+  const signupMutation = useSignupMutation();
+  const submitting = signupMutation.isPending;
+  const error = signupMutation.isError
+    ? signupMutation.error instanceof Error
+      ? signupMutation.error.message
+      : "Something went wrong. Please try again."
+    : "";
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit || submitting) return;
-    setError("");
-    setSubmitting(true);
-    // Hook this up to your auth call, e.g.:
-    // await signUp({ name, email, password })
-    setTimeout(() => {
-      setSubmitting(false);
-      window.location.href = "/knowledge-base";
-    }, 900);
+    signupMutation.mutate(
+      { name, email, password },
+      {
+        onSuccess: () => {
+          window.location.href = "/knowledge-base";
+        },
+      }
+    );
   }
 
   return (
@@ -390,10 +403,7 @@ export default function SignupPage() {
                   autoComplete="name"
                   placeholder="Ada Lovelace"
                   value={name}
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    setError("");
-                  }}
+                  onChange={(e) => setName(e.target.value)}
                 />
               </div>
 
@@ -410,10 +420,7 @@ export default function SignupPage() {
                   autoComplete="email"
                   placeholder="you@company.com"
                   value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setError("");
-                  }}
+                  onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
 
@@ -430,16 +437,13 @@ export default function SignupPage() {
                   autoComplete="new-password"
                   placeholder="At least 6 characters"
                   value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    setError("");
-                  }}
+                  onChange={(e) => setPassword(e.target.value)}
                 />
                 <button
                   type="button"
                   className="field-toggle"
                   aria-label={showPassword ? "Hide password" : "Show password"}
-                  onClick={() => setShowPassword((v) => !v)}
+                  onClick={() => toggleShowPassword()}
                 >
                   <EyeIcon off={showPassword} />
                 </button>
@@ -458,10 +462,7 @@ export default function SignupPage() {
                   autoComplete="new-password"
                   placeholder="Re-enter your password"
                   value={confirm}
-                  onChange={(e) => {
-                    setConfirm(e.target.value);
-                    setError("");
-                  }}
+                  onChange={(e) => setConfirm(e.target.value)}
                 />
               </div>
               {!passwordsMatch && <div className="field-hint">Passwords don&apos;t match yet.</div>}

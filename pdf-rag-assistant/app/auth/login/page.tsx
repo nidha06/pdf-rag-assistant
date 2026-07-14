@@ -1,6 +1,7 @@
 "use client";
 
-import { useLoginStore } from "../../store/loginStore";
+import { useAuthStore } from "../../store/authStore";
+import { useLoginMutation } from "../../hooks/useAuthMutations";
 
 /**
  * Docmind — Sign in
@@ -130,25 +131,36 @@ const doodleSvgTile = `
 const doodleBackground = `url("data:image/svg+xml,${encodeURIComponent(doodleSvgTile)}")`;
 
 export default function LoginPage() {
-  const email = useLoginStore((s) => s.email);
-  const password = useLoginStore((s) => s.password);
-  const showPassword = useLoginStore((s) => s.showPassword);
-  const remember = useLoginStore((s) => s.remember);
-  const submitting = useLoginStore((s) => s.submitting);
-  const error = useLoginStore((s) => s.error);
+  const email = useAuthStore((s) => s.email);
+  const password = useAuthStore((s) => s.password);
+  const showPassword = useAuthStore((s) => s.showPassword);
+  const remember = useAuthStore((s) => s.remember);
 
-  const setEmail = useLoginStore((s) => s.setEmail);
-  const setPassword = useLoginStore((s) => s.setPassword);
-  const toggleShowPassword = useLoginStore((s) => s.toggleShowPassword);
-  const setRemember = useLoginStore((s) => s.setRemember);
-  const canSubmit = useLoginStore((s) => s.canSubmit());
-  const submit = useLoginStore((s) => s.submit);
+  const setEmail = useAuthStore((s) => s.setEmail);
+  const setPassword = useAuthStore((s) => s.setPassword);
+  const toggleShowPassword = useAuthStore((s) => s.toggleShowPassword);
+  const setRemember = useAuthStore((s) => s.setRemember);
+  const canSubmit = useAuthStore((s) => s.canSubmit());
+
+  const loginMutation = useLoginMutation();
+  const submitting = loginMutation.isPending;
+  const error = loginMutation.isError
+    ? loginMutation.error instanceof Error
+      ? loginMutation.error.message
+      : "Something went wrong. Please try again."
+    : "";
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    submit(() => {
-      window.location.href = "/";
-    });
+    if (!canSubmit || submitting) return;
+    loginMutation.mutate(
+      { email, password, remember },
+      {
+        onSuccess: () => {
+          window.location.href = "/";
+        },
+      }
+    );
   }
 
   return (

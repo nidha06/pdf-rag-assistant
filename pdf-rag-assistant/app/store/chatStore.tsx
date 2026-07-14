@@ -161,6 +161,8 @@ interface DocmindState {
   setIsTyping: (value: boolean) => void;
 
   sendMessage: () => void;
+  submitUserMessage: () => string | null;
+  appendAiMessage: (text: string) => void;
   addAttachment: (name: string, size: string) => void;
   removeAttachment: (id: string) => void;
 }
@@ -213,6 +215,41 @@ export const useDocmindStore = create<DocmindState>((set, get) => ({
       }));
     }, 900);
   },
+
+  // Optimistically pushes the composer text as a user message, clears
+  // the input, and returns the trimmed text (or null if empty) so the
+  // caller can kick off the React Query mutation with it.
+  submitUserMessage: () => {
+    const text = get().input.trim();
+    if (!text) return null;
+
+    const userMsg: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      time: now(),
+      content: <p>{text}</p>,
+    };
+
+    set((state) => ({
+      messages: [...state.messages, userMsg],
+      input: "",
+    }));
+
+    return text;
+  },
+
+  appendAiMessage: (text) =>
+    set((state) => ({
+      messages: [
+        ...state.messages,
+        {
+          id: crypto.randomUUID(),
+          role: "ai",
+          time: now(),
+          content: <p>{text}</p>,
+        },
+      ],
+    })),
 
   addAttachment: (name, size) =>
     set((state) => ({

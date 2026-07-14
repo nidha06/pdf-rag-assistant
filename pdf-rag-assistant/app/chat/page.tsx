@@ -7,6 +7,7 @@ import {
   documents,
   conversations,
 } from "../store/chatStore";
+import { useSendMessageMutation } from "../hooks/useChatMutations";
 
 /**
  * Docmind — AI document chat
@@ -80,9 +81,36 @@ export default function DocmindPage() {
   const setInput = useDocmindStore((s) => s.setInput);
   const setDragOver = useDocmindStore((s) => s.setDragOver);
   const setIsTyping = useDocmindStore((s) => s.setIsTyping);
-  const sendMessage = useDocmindStore((s) => s.sendMessage);
+  const submitUserMessage = useDocmindStore((s) => s.submitUserMessage);
+  const appendAiMessage = useDocmindStore((s) => s.appendAiMessage);
   const addAttachment = useDocmindStore((s) => s.addAttachment);
   const removeAttachment = useDocmindStore((s) => s.removeAttachment);
+  const attachmentsForSend = useDocmindStore((s) => s.attachments);
+
+  const sendMessageMutation = useSendMessageMutation();
+
+  function sendMessage() {
+    const text = submitUserMessage();
+    if (!text) return;
+
+    setIsTyping(true);
+    sendMessageMutation.mutate(
+      { text, attachmentIds: attachmentsForSend.map((a) => a.id) },
+      {
+        onSuccess: (result) => {
+          appendAiMessage(result.reply);
+        },
+        onError: () => {
+          appendAiMessage(
+            "Sorry, something went wrong reaching the model. Please try again."
+          );
+        },
+        onSettled: () => {
+          setIsTyping(false);
+        },
+      }
+    );
+  }
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
