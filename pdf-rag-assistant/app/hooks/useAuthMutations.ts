@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
+import axios from "axios";
 
 /**
  * useAuthMutations — the network side of sign-in / sign-up.
@@ -14,10 +15,9 @@ import { useMutation } from "@tanstack/react-query";
  */
 
 type LoginPayload = {
-  email: string;
-  password: string;
-  remember: boolean;
-};
+  email:string;
+  password:string;
+}
 
 type SignupPayload = {
   name: string;
@@ -25,46 +25,28 @@ type SignupPayload = {
   password: string;
 };
 
-async function loginRequest(payload: LoginPayload) {
-  // Replace with your real endpoint, e.g.:
-  // const res = await fetch("/api/auth/login", {
-  //   method: "POST",
-  //   headers: { "Content-Type": "application/json" },
-  //   body: JSON.stringify(payload),
-  // });
-  // if (!res.ok) {
-  //   const body = await res.json().catch(() => null);
-  //   throw new Error(body?.message ?? "Invalid email or password.");
-  // }
-  // return res.json();
-  await new Promise((resolve) => setTimeout(resolve, 900));
-  return { ok: true };
+export const signinRequest = async(payload:LoginPayload)=>{
+  // console.log("Reached - signin reqqq")
+  const respones = await axios.post("/api/auth/login",payload);
+  console.log("DATA:",respones.data)
+  // return respones.data
 }
 
-async function signupRequest(payload: SignupPayload) {
-  // Replace with your real endpoint, e.g.:
-  // const res = await fetch("/api/auth/signup", {
-  //   method: "POST",
-  //   headers: { "Content-Type": "application/json" },
-  //   body: JSON.stringify(payload),
-  // });
-  // if (!res.ok) {
-  //   const body = await res.json().catch(() => null);
-  //   throw new Error(body?.message ?? "Could not create your account.");
-  // }
-  // return res.json();
-  await new Promise((resolve) => setTimeout(resolve, 900));
-  return { ok: true };
+export const signupRequest = async(payload:SignupPayload)=>{
+  console.log("Reached to signup request")
+  const respones = await axios.post("/api/auth/signup",payload);
+  return respones.data
 }
 
-export function useLoginMutation() {
+export function useSigninMutation(){
+  console.log('Reached here - useSigninMutaiton')
   return useMutation({
-    mutationFn: loginRequest,
-  });
+    mutationFn: signinRequest,
+  })
 }
 
-export function useSignupMutation() {
+export function useSignupMutation(){
   return useMutation({
-    mutationFn: signupRequest,
-  });
+    mutationFn: signupRequest
+  })
 }

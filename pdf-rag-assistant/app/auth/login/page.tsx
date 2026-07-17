@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuthStore } from "../../store/authStore";
-import { useLoginMutation } from "../../hooks/useAuthMutations";
+import { useSigninMutation } from "../../hooks/useAuthMutations";
 
 /**
  * Docmind — Sign in
@@ -142,7 +142,7 @@ export default function LoginPage() {
   const setRemember = useAuthStore((s) => s.setRemember);
   const canSubmit = useAuthStore((s) => s.canSubmit());
 
-  const loginMutation = useLoginMutation();
+  const loginMutation = useSigninMutation();
   const submitting = loginMutation.isPending;
   const error = loginMutation.isError
     ? loginMutation.error instanceof Error
@@ -150,17 +150,17 @@ export default function LoginPage() {
       : "Something went wrong. Please try again."
     : "";
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleFormSubmit(e: React.SyntheticEvent) {
     e.preventDefault();
-    if (!canSubmit || submitting) return;
+
     loginMutation.mutate(
-      { email, password, remember },
-      {
-        onSuccess: () => {
-          window.location.href = "/";
-        },
-      }
+      {email,password},
+      {onSuccess: ()=>{
+        window.location.href = "/chat"
+      },
+    }
     );
+   
   }
 
   return (
@@ -374,7 +374,7 @@ export default function LoginPage() {
               <span>or sign in with email</span>
             </div>
 
-            <form onSubmit={handleSubmit} noValidate>
+            <form onSubmit={handleFormSubmit} noValidate>
               <label className="field-label" htmlFor="email">
                 Email
               </label>

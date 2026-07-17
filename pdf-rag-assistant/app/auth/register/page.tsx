@@ -162,7 +162,7 @@ export default function SignupPage() {
       : "Something went wrong. Please try again."
     : "";
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleFormSubmit(e: React.SyntheticEvent) {
     e.preventDefault();
     if (!canSubmit || submitting) return;
     signupMutation.mutate(
@@ -389,7 +389,7 @@ export default function SignupPage() {
               <span>or sign up with email</span>
             </div>
 
-            <form onSubmit={handleSubmit} noValidate>
+            <form onSubmit={handleFormSubmit} noValidate>
               <label className="field-label" htmlFor="name">
                 Full name
               </label>
