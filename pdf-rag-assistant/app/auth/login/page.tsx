@@ -422,7 +422,7 @@ export default function LoginPage() {
                 </button>
               </div>
 
-              {error && <div className="form-error">{error}</div>}
+              {error && <div className="form-error">Invalid Credentials</div>}
 
               <label className="remember-row">
                 <input
