@@ -2,6 +2,7 @@
 
 import { useAuthStore } from "../../store/authStore";
 import { useSigninMutation } from "../../hooks/useAuthMutations";
+import { useRouter } from "next/navigation";
 
 /**
  * Docmind — Sign in
@@ -131,11 +132,12 @@ const doodleSvgTile = `
 const doodleBackground = `url("data:image/svg+xml,${encodeURIComponent(doodleSvgTile)}")`;
 
 export default function LoginPage() {
+   const router = useRouter();
   const email = useAuthStore((s) => s.email);
   const password = useAuthStore((s) => s.password);
   const showPassword = useAuthStore((s) => s.showPassword);
   const remember = useAuthStore((s) => s.remember);
-
+ 
   const setEmail = useAuthStore((s) => s.setEmail);
   const setPassword = useAuthStore((s) => s.setPassword);
   const toggleShowPassword = useAuthStore((s) => s.toggleShowPassword);
@@ -156,7 +158,7 @@ export default function LoginPage() {
     loginMutation.mutate(
       {email,password},
       {onSuccess: ()=>{
-        window.location.href = "/chat"
+       router.push("/documentManager");
       },
     }
     );

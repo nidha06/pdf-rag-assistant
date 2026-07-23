@@ -38,15 +38,6 @@ export const signupRequest = async(payload:SignupPayload)=>{
   return respones.data
 }
 
-// export const uploadFilesRequest = async(data:{files:File[]}){
-//   const formData = new FormData();
-
-//   data.files.forEach((file:File)=>{
-//     formData.append("files",file);  
-//   });
-
-//   const respones = await axios.post("/api/")
-// }
 export function useSigninMutation(){
   console.log('Reached here - useSigninMutaiton')
   return useMutation({
@@ -60,8 +51,3 @@ export function useSignupMutation(){
   })
 }
 
-// export function useUploadFilesMutation(){
-//   return useMutation({
-//     mutationFn: uploadFilesRequest,
-//   })
-// }

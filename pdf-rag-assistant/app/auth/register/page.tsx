@@ -169,7 +169,7 @@ export default function SignupPage() {
       { name, email, password },
       {
         onSuccess: () => {
-          window.location.href = "/knowledge-base";
+          window.location.href = "/documentManager";
         },
       }
     );

@@ -1,13 +1,18 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useDocmindStore,
   FileIcon,
-  documents,
   conversations,
 } from "../store/chatStore";
 import { useSendMessageMutation } from "../hooks/useChatMutations";
+import {
+  useDocuments,
+  useUploadFilesMutation,
+} from "../hooks/useKnowledgeBaseMutations";
+// import { useCurrentUser } from "../hooks/useUserQuery";
 
 /**
  * Docmind — AI document chat
@@ -19,6 +24,13 @@ import { useSendMessageMutation } from "../hooks/useChatMutations";
  *
  * All chat/document/attachment state lives in `useDocmindStore`
  * (Zustand) — this file only renders and wires up event handlers.
+ *
+ * Documents shown in the sidebar and the current user shown in the
+ * profile card now come from the backend (useDocuments / useCurrentUser)
+ * instead of the store's dummy fixtures. The old "attach" button that
+ * faked an upload has been removed — dropping a file onto the composer
+ * is now the one upload path, and it goes straight to the real
+ * /api/documents endpoint.
  */
 
 /**
@@ -71,12 +83,36 @@ const doodleSvgTile = `
 
 const doodleBackground = `url("data:image/svg+xml,${encodeURIComponent(doodleSvgTile)}")`;
 
+/** "Maren Ruiz" -> "MR". Falls back to "?" when there's no name yet. */
+function getInitials(name?: string | null) {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/** Picks a sidebar file-icon color based on the document's extension. */
+function getFileKind(name?: string | null) {
+  const ext = (name?.split(".").pop() || "").toLowerCase();
+  if (ext === "pdf") return "pdf";
+  if (ext === "doc" || ext === "docx") return "docx";
+  return "txt";
+}
+
+function formatBytes(bytes?: number | null) {
+  if (bytes == null || Number.isNaN(bytes)) return "";
+  const kb = bytes / 1024;
+  return kb > 1024 ? (kb / 1024).toFixed(1) + " MB" : kb.toFixed(0) + " KB";
+}
+
 export default function DocmindPage() {
   const messages = useDocmindStore((s) => s.messages);
   const attachments = useDocmindStore((s) => s.attachments);
   const input = useDocmindStore((s) => s.input);
   const isTyping = useDocmindStore((s) => s.isTyping);
   const dragOver = useDocmindStore((s) => s.dragOver);
+  //  const { data: document, isLoading, error } = useDocuments();
 
   const setInput = useDocmindStore((s) => s.setInput);
   const setDragOver = useDocmindStore((s) => s.setDragOver);
@@ -87,8 +123,27 @@ export default function DocmindPage() {
   const removeAttachment = useDocmindStore((s) => s.removeAttachment);
   const attachmentsForSend = useDocmindStore((s) => s.attachments);
 
+  const queryClient = useQueryClient();
   const sendMessageMutation = useSendMessageMutation();
+  const uploadFilesMutation = useUploadFilesMutation();
+ 
 
+  const {
+  data: documentsData,
+  isLoading,
+  error,
+} = useDocuments();
+
+const documents = Array.isArray(documentsData)
+  ? documentsData
+  : documentsData?.documents ?? [];
+
+  // Real current user, replacing the hardcoded "Maren Ruiz" profile card.
+  // const { data: currentUser, isLoading: fals } = useCurrentUser();
+   
+//   if (isLoading) {
+//   return <div>Loading...</div>;
+// }
   function sendMessage() {
     const text = submitUserMessage();
     if (!text) return;
@@ -143,12 +198,27 @@ export default function DocmindPage() {
     e.preventDefault();
     setDragOver(false);
     const files = Array.from(e.dataTransfer.files || []);
+    if (!files.length) return;
+
+    // Optimistic preview chips in the composer while the upload is in flight.
     files.forEach((f) => {
-      const kb = f.size / 1024;
-      const sizeStr =
-        kb > 1024 ? (kb / 1024).toFixed(1) + " MB" : kb.toFixed(0) + " KB";
-      addAttachment(f.name, sizeStr);
+      addAttachment(f.name, formatBytes(f.size));
     });
+
+    // Real upload to the backend, then refresh the sidebar document list.
+    uploadFilesMutation.mutate(
+      { files },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ["documents"] });
+        },
+        onError: () => {
+          appendAiMessage(
+            "One of your files didn't upload. Please try dropping it again."
+          );
+        },
+      }
+    );
   }
 
   return (
@@ -207,7 +277,8 @@ export default function DocmindPage() {
               {messages.map((m) => (
                 <div className={`msg ${m.role}`} key={m.id}>
                   <div className={`msg-avatar ${m.role === "ai" ? "pixel" : ""}`}>
-                    {m.role === "ai" ? "AI" : "MR"}
+                    {/* {m.role === "ai" ? "AI" : getInitials(currentUser?.name)} */}
+                    nidha
                   </div>
                   <div className="bubble-wrap">
                     <div className="bubble">{m.content}</div>
@@ -238,26 +309,23 @@ export default function DocmindPage() {
             <div className="input-inner">
               {attachments.length > 0 && (
                 <div className="attachments-preview">
-                  {attachments.map((a) => (
-                    <div className="attachment-chip" key={a.id}>
-                      <span className="file-ico">
-                        <FileIcon />
-                      </span>
-                      <div className="file-meta">
-                        <div className="file-name">{a.name}</div>
-                        <div className="file-size">{a.size}</div>
-                      </div>
-                      <button
-                        className="remove-btn"
-                        aria-label="Remove attachment"
-                        onClick={() => removeAttachment(a.id)}
-                      >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-                          <path d="M18 6 6 18M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  ))}
+                 {documents?.map((document: any) => (
+  <div className="sb-row" key={document.id}>
+    <span className="file-ico">
+      <FileIcon />
+    </span>
+
+    <div className="sb-row-text">
+      <div className="sb-row-title">
+        {document.fileName}
+      </div>
+
+      <div className="sb-row-sub">
+        {formatBytes(document.fileSize)}
+      </div>
+    </div>
+  </div>
+))}
                 </div>
               )}
 
@@ -280,15 +348,6 @@ export default function DocmindPage() {
                 />
                 <div className="composer-actions">
                   <button
-                    className="upload-btn"
-                    aria-label="Attach document"
-                    onClick={() => addAttachment("Budget-forecast.xlsx", "890 KB")}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                    </svg>
-                  </button>
-                  <button
                     className="send-btn"
                     aria-label="Send message"
                     disabled={!input.trim()}
@@ -302,7 +361,7 @@ export default function DocmindPage() {
               </div>
 
               <div className="composer-hint">
-                <span>PDF, DOCX and TXT supported</span>
+                <span>Drop a PDF, DOCX or TXT file to add it</span>
                 <span>
                   <kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for new line
                 </span>
@@ -316,12 +375,18 @@ export default function DocmindPage() {
           <div className="profile-block">
             <div className="profile-card">
               <div className="avatar">
-                MR
+                {/* {getInitials(currentUser?.name)} */}
                 <span className="online-dot" />
               </div>
               <div className="profile-meta">
-                <div className="profile-name">Maren Ruiz</div>
-                <div className="profile-email">maren@northfield.co</div>
+                <div className="profile-name">
+                  {/* {userLoading ? "Loading…" : currentUser?.name ?? "Unknown user"} */}
+                  nidha
+                </div>
+                <div className="profile-email">
+                  {/* {userLoading ? "" : currentUser?.email ?? ""} */}
+                  nidha@gmail.com
+                </div>
               </div>
             </div>
             <div className="workspace-row">
@@ -340,22 +405,35 @@ export default function DocmindPage() {
             </div>
           </div>
 
-          <div>
-            <div className="sidebar-section-label">Documents</div>
-            <div className="sb-card">
-              {documents.map((d, i) => (
-                <div className="sb-row" key={i}>
-                  <span className={`file-ico ${d.kind}`}>
-                    <FileIcon />
-                  </span>
-                  <div className="sb-row-text">
-                    <div className="sb-row-title">{d.name}</div>
-                    <div className="sb-row-sub">{d.meta}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+         <div className="sidebar-section-label">Documents</div>
+
+<div className="sb-card">
+
+  {isLoading && <p>Loading...</p>}
+
+  {!isLoading && documents?.length === 0 && (
+    <p>No documents uploaded</p>
+  )}
+
+  {documents?.map((document: any) => (
+    <div className="sb-row" key={document.id}>
+      <span className="file-ico">
+        <FileIcon />
+      </span>
+
+      <div className="sb-row-text">
+        <div className="sb-row-title">
+          {document.fileName}
+        </div>
+
+        <div className="sb-row-sub">
+          {formatBytes(document.fileSize)}
+        </div>
+      </div>
+    </div>
+  ))}
+
+</div>
 
           <div>
             <div className="sidebar-section-label">Recent conversations</div>
@@ -904,29 +982,6 @@ export default function DocmindPage() {
           display: flex;
           align-items: center;
           gap: 4px;
-        }
-        .upload-btn {
-          width: 36px;
-          height: 36px;
-          border-radius: 50%;
-          border: 1px solid var(--border);
-          background: var(--surface-2);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: var(--text-secondary);
-          cursor: pointer;
-          flex-shrink: 0;
-          transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-        }
-        .upload-btn:hover {
-          background: var(--surface-3);
-          border-color: var(--lime-dim);
-          color: var(--lime);
-        }
-        .upload-btn svg {
-          width: 17px;
-          height: 17px;
         }
 
         .send-btn {

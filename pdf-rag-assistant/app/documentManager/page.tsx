@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 import { useUploadFilesMutation } from "../hooks/useKnowledgeBaseMutations";
+import { useCurrentUser } from "../hooks/useUserMutations";
+import { useRouter } from "next/navigation";
 
 /**
  * Docmind — Knowledge base upload page
@@ -93,7 +95,10 @@ export default function KnowledgeBasePage() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
+  const {data:user} = useCurrentUser()
+  const router = useRouter();
+  
+  console.log("USER DETAILS: ",user);
   function addFiles(fileList: FileList | File[]) {
     const incoming = Array.from(fileList).map((f) => ({
       id: crypto.randomUUID(),
@@ -108,7 +113,16 @@ export default function KnowledgeBasePage() {
     setFiles((prev) => prev.filter((f) => f.id !== id));
   }
 
+  function handleBrowseFiles(){
+    if(!user){
+        router.push("/auth/login");
+        return 
+    }
+    fileInputRef.current?.click();
+  }
+
   function handleDrop(e: React.DragEvent) {
+
     e.preventDefault();
     setDragOver(false);
     if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
@@ -116,22 +130,28 @@ export default function KnowledgeBasePage() {
 
   const uploadMutation = useUploadFilesMutation();
 
-  function handleContinue() {
-    if (files.length === 0 || uploadMutation.isPending) return;
-    uploadMutation.mutate(
-      { files: files.map((f) => f.file) },
-      {
-        onSuccess: () => {
-          // Hook up navigation to the chat interface here, e.g.:
-          // router.push("/chat");
-          window.location.href = "/chat";
-        },
-        onError: () => {
-          alert("Upload failed — please try again.");
-        },
-      }
-    );
-  }
+function handleContinue() {
+  if (files.length === 0) return;
+ 
+
+
+
+  uploadMutation.mutate(
+    {
+      files: files.map((f) => f.file),
+  
+    },
+    {
+      onSuccess: (data) => {
+        console.log(data);
+         window.location.href = "/chat"
+      },
+      onError: (err) => {
+        console.log(err);
+      },
+    }
+  );
+}
 
   return (
     <div className="app">
@@ -190,7 +210,7 @@ export default function KnowledgeBasePage() {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  fileInputRef.current?.click();
+                 handleBrowseFiles();
                 }}
               >
                 Browse files
