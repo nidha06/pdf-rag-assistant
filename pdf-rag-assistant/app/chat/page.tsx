@@ -13,39 +13,7 @@ import {
   useUploadFilesMutation,
 } from "../hooks/useKnowledgeBaseMutations";
 import { useCurrentUser } from "../hooks/useUserMutations";
-import {File} from "lucide-react"
 
-/**
- * Docmind — AI document chat
- * Single-file Next.js page. Drop this in as `app/page.tsx` (App Router)
- * or `pages/index.tsx` (Pages Router, drop the "use client" line).
- *
- * No external CSS files needed — styling is done with styled-jsx,
- * which ships built into Next.js by default.
- *
- * All chat/document/attachment state lives in `useDocmindStore`
- * (Zustand) — this file only renders and wires up event handlers.
- *
- * Documents shown in the sidebar and the current user shown in the
- * profile card now come from the backend (useDocuments / useCurrentUser)
- * instead of the store's dummy fixtures. The old "attach" button that
- * faked an upload has been removed — dropping a file onto the composer
- * is now the one upload path, and it goes straight to the real
- * /api/documents endpoint.
- *
- * NEW: documents in the sidebar are now selectable. Selecting a document
- * scopes the next question to that document (sent along as `documentIds`
- * on the chat mutation) and shows a removable chip above the composer.
- * The sidebar only ever lists the first 5 documents — with more than 5,
- * a "View all files" row opens a modal with the complete list, where
- * selection works the same way.
- */
-
-/**
- * Subtle, WhatsApp-style tiled doodle background for the chat canvas.
- * Pixel-styled AI motifs (bot face, sparkle, chat bubble, code brackets,
- * circuit nodes) drawn at very low opacity in the lime brand color.
- */
 const doodleSvgTile = `
 <svg xmlns='http://www.w3.org/2000/svg' width='260' height='260' viewBox='0 0 260 260'>
   <g fill='none' stroke='rgba(227,242,74,0.07)' stroke-width='2.2' stroke-linecap='square' stroke-linejoin='miter'>
@@ -132,11 +100,11 @@ export default function DocmindPage() {
   const appendAiMessage = useDocmindStore((s) => s.appendAiMessage);
   const addAttachment = useDocmindStore((s) => s.addAttachment);
   const removeAttachment = useDocmindStore((s) => s.removeAttachment);
-  const attachmentsForSend = useDocmindStore((s) => s.attachments);
 
   const queryClient = useQueryClient();
   const sendMessageMutation = useSendMessageMutation();
   const uploadFilesMutation = useUploadFilesMutation();
+  const isSending = sendMessageMutation.isPending;
 
   // NEW: which knowledge-base documents (from the sidebar) are selected to
   // scope the next question, and whether the "view all files" modal is open.
@@ -152,13 +120,7 @@ export default function DocmindPage() {
 
 const documents = Array.isArray(documentsData)
   ? documentsData
-  : Array.isArray(documentsData?.documents)
-  ? documentsData.documents
-  : Array.isArray(documentsData?.data)
-  ? documentsData.data
-  : Array.isArray(documentsData?.data?.documents)
-  ? documentsData.data.documents
-  : [];
+  : documentsData?.documents ?? [];
 
   const visibleSidebarDocs = documents.slice(0, SIDEBAR_DOC_LIMIT);
   const hasMoreDocs = documents.length > SIDEBAR_DOC_LIMIT;
@@ -171,31 +133,43 @@ const documents = Array.isArray(documentsData)
   }
 
   // Real current user, replacing the hardcoded "Maren Ruiz" profile card.
-  const { data:user} = useCurrentUser();
-  console.log("USER TO THE CHAT: ",user);
+  const { data: user } = useCurrentUser();
    
 //   if (isLoading) {
 //   return <div>Loading...</div>;
 // }
   function sendMessage() {
-    const text = submitUserMessage();
-    if (!text) return;
+    const question = input.trim();
+
+    if (!question || isSending) return;
+
+    // Send a small amount of recent history so Gemini can understand
+    // follow-up questions in both general-chat and document-chat modes.
+    const history = messages.slice(-10).map((message) => ({
+      role: message.role === "ai" ? "assistant" : "user",
+      content: message.content,
+    }));
+
+    // Adds the user's message to Zustand and clears the composer.
+    submitUserMessage();
 
     setIsTyping(true);
     sendMessageMutation.mutate(
       {
-        text,
-        attachmentIds: attachmentsForSend.map((a) => a.id),
+        question,
         documentIds: selectedDocIds,
+        history,
       },
       {
         onSuccess: (result) => {
-          appendAiMessage(result.reply);
+          appendAiMessage(result.answer);
         },
         onError: () => {
           appendAiMessage(
             "Sorry, something went wrong reaching the model. Please try again."
           );
+          // Put the failed question back so the user can retry it.
+          setInput(question);
         },
         onSettled: () => {
           setIsTyping(false);
@@ -206,12 +180,6 @@ const documents = Array.isArray(documentsData)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const t = setTimeout(() => setIsTyping(false), 900);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -235,7 +203,7 @@ const documents = Array.isArray(documentsData)
   }, [showAllDocsModal]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       sendMessage();
     }
@@ -272,7 +240,7 @@ const documents = Array.isArray(documentsData)
   const isSelected = selectedDocIds.includes(document.id);
   return (
     <div
-      className={`sb-row ${isSelected ? "selected" : ""}`}
+      className={`doc-row ${isSelected ? "selected" : ""}`}
       key={document.id}
       onClick={() => toggleDocSelection(document.id)}
       role="checkbox"
@@ -285,13 +253,18 @@ const documents = Array.isArray(documentsData)
         }
       }}
     >
-      <span className={`file-ico ${getFileKind(document.fileName)}`}>
-        <File />
+      <span className={`doc-file-ico ${getFileKind(document.fileName)} ${isSelected ? "is-checked" : ""}`}>
+        {isSelected ? (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        ) : (
+          <FileIcon />
+        )}
       </span>
 
-      <div className="sb-row-text">
-        <div className="sb-row-title">{document.fileName}</div>
-        <div className="sb-row-sub">{formatBytes(document.fileSize)}</div>
+      <div className="doc-row-text">
+        <div className="doc-row-title">{document.fileName}</div>
       </div>
     </div>
   );
@@ -354,8 +327,7 @@ const documents = Array.isArray(documentsData)
               {messages.map((m) => (
                 <div className={`msg ${m.role}`} key={m.id}>
                   <div className={`msg-avatar ${m.role === "ai" ? "pixel" : ""}`}>
-                    {/* {m.role === "ai" ? "AI" : getInitials(currentUser?.name)} */}
-                    {user?.name}
+                    {m.role === "ai" ? "AI" : getInitials(user?.name)}
                   </div>
                   <div className="bubble-wrap">
                     <div className="bubble">{m.content}</div>
@@ -420,24 +392,24 @@ const documents = Array.isArray(documentsData)
                 <div className="attachments-preview">
                   {attachments.map((a: any) => (
                     <div className="attachment-chip" key={a.id}>
-                      {/* <span className="file-ico">
+                      <span className="file-ico">
                         <FileIcon />
-                      </span> */}
-                      {/* <div className="file-meta">
+                      </span>
+                      <div className="file-meta">
                         <div className="file-name">{a.name}</div>
                         <div className="file-size">{a.size}</div>
-                      </div> */}
-                      {/* <button
+                      </div>
+                      <button
                         type="button"
                         className="remove-btn"
                         aria-label={`Remove ${a.name}`}
                         onClick={() => removeAttachment(a.id)}
-                      > */}
-                        {/* <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M18 6 6 18" />
                           <path d="m6 6 12 12" />
                         </svg>
-                      </button> */}
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -455,16 +427,25 @@ const documents = Array.isArray(documentsData)
                 <textarea
                   ref={textareaRef}
                   rows={1}
-                  placeholder="Ask about your documents, or drop a file to add it"
+                  placeholder={
+                    selectedDocIds.length > 0
+                      ? "Ask a question about the selected documents"
+                      : "Message Docmind AI"
+                  }
                   value={input}
+                  disabled={isSending}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                 />
                 <div className="composer-actions">
                   <button
+                    type="button"
                     className="send-btn"
-                    aria-label="Send message"
-                    disabled={!input.trim()}
+                    aria-label={isSending ? "Sending message" : "Send message"}
+                    disabled={
+                      isSending ||
+                      !input.trim()
+                    }
                     onClick={sendMessage}
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
@@ -475,7 +456,11 @@ const documents = Array.isArray(documentsData)
               </div>
 
               <div className="composer-hint">
-                <span>Drop a PDF, DOCX or TXT file to add it</span>
+                <span className="chat-mode">
+                  {selectedDocIds.length > 0
+                    ? `Document chat · ${selectedDocIds.length} selected`
+                    : "General chat · select documents to ask about them"}
+                </span>
                 <span>
                   <kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for new line
                 </span>
@@ -489,7 +474,7 @@ const documents = Array.isArray(documentsData)
           <div className="profile-block">
             <div className="profile-card">
               <div className="avatar">
-                {/* {getInitials(currentUser?.name)} */}
+                {getInitials(user?.name)}
                 <span className="online-dot" />
               </div>
               <div className="profile-meta">
@@ -505,15 +490,8 @@ const documents = Array.isArray(documentsData)
             
           </div>
 <div className="sidebar-section-label">Knowledge Base</div>
-<div className="sidebar-subtitle">
-  {isLoading
-    ? "Loading documents…"
-    : error
-    ? `Unable to load documents: ${error?.message || "unknown"}`
-    : `${documents.length} documents loaded`}
-</div>
 
-<div className="sb-card">
+<div className="doc-list-container">
   {isLoading && (
     <div className="doc-list-loading">
       <span className="spinner" />
@@ -521,7 +499,7 @@ const documents = Array.isArray(documentsData)
     </div>
   )}
 
-  {!isLoading && !error && visibleSidebarDocs.length === 0 && (
+  {!isLoading && documents?.length === 0 && (
     <div className="doc-list-empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -532,11 +510,9 @@ const documents = Array.isArray(documentsData)
     </div>
   )}
 
-  {!isLoading && !error && visibleSidebarDocs.length > 0 && (
-    <div className="doc-rows-wrapper">
-      {visibleSidebarDocs.map((document: any) => renderSelectableDocRow(document))}
-    </div>
-  )}
+  <div className="doc-rows-wrapper">
+    {visibleSidebarDocs.map((document: any) => renderSelectableDocRow(document))}
+  </div>
 
   {hasMoreDocs && (
     <button
@@ -806,13 +782,272 @@ const documents = Array.isArray(documentsData)
           width: 16px;
           height: 16px;
         }
+          /* --- Redesigned Document List Section --- */
 
+.doc-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
+.doc-rows-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.doc-row:hover {
+  background: var(--surface-2);
+}
+.doc-row.selected {
+  background: rgba(227, 242, 74, 0.08);
+}
 
+.doc-file-ico {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.doc-file-ico :global(svg) {
+  width: 13px !important;
+  height: 13px !important;
+  display: block;
+}
+.doc-file-ico.pdf {
+  background: rgba(227, 242, 74, 0.14);
+  color: var(--lime);
+}
+.doc-file-ico.is-checked {
+  background: var(--lime);
+  color: var(--lime-text);
+}
 
+.doc-row-text {
+  min-width: 0;
+  flex: 1;
+}
+.doc-row-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-row.selected .doc-row-title {
+  color: var(--lime);
+}
 
+/* Checkbox redesign */
+.doc-checkbox {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
 
+.doc-checkbox.checked {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: var(--lime-text);
+}
+
+.doc-checkbox svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Icon Box enhancement */
+.doc-file-ico {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  transition: inherit;
+}
+
+.doc-file-ico.pdf {
+  color: #ff4d4d; /* Subtle red for PDFs */
+  background: rgba(255, 77, 77, 0.05);
+}
+
+.doc-file-ico.docx {
+  color: #4da6ff; /* Blue for docs */
+  background: rgba(77, 166, 255, 0.05);
+}
+
+.doc-file-ico.txt {
+  color: var(--text-secondary);
+  background: var(--surface-2);
+}
+
+.doc-row.selected .doc-file-ico {
+  background: var(--lime);
+  color: var(--lime-text);
+  border-color: var(--lime);
+}
+
+/* Text group */
+.doc-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.2s ease;
+}
+
+.doc-row-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* View All Button Redesign */
+.view-all-action {
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px;
+  background: linear-gradient(to right, var(--surface), var(--bg));
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+
+.view-all-action:hover {
+  border-color: var(--lime-dim);
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.stacked-icons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 14px;
+}
+
+.stacked-icons span {
+  height: 2px;
+  background: currentColor;
+  border-radius: 1px;
+}
+
+.stacked-icons span:nth-child(1) { width: 100%; opacity: 0.4; }
+.stacked-icons span:nth-child(2) { width: 70%; opacity: 0.7; }
+.stacked-icons span:nth-child(3) { width: 40%; opacity: 1; }
+
+.view-all-text {
+  flex: 1;
+  text-align: left;
+}
+
+.view-all-text .title {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.view-all-text .sub {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.view-all-action svg {
+  width: 16px;
+  height: 16px;
+  opacity: 0.5;
+}
+
+/* States */
+.doc-list-loading {
+  padding: 20px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--lime);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.doc-list-empty {
+  padding: 30px 20px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+}
+
+.doc-list-empty svg {
+  width: 24px;
+  height: 24px;
+  margin: 0 auto 8px;
+  opacity: 0.3;
+}
+
+.doc-list-empty p {
+  font-size: 12px;
+}
 
         .header-actions {
           display: flex;
@@ -853,63 +1088,64 @@ const documents = Array.isArray(documentsData)
           background: var(--lime);
           border: 1.5px solid var(--surface);
         }
-       
-
-        
-
-
-.sb-card {
+          .doc-list-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  overflow: hidden;
+  padding: 6px;
 }
-
-.doc-list-container {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.sidebar-subtitle {
-  font-size: 11px;
+.doc-list-empty {
+  padding: 12px 8px;
+  font-size: 12.5px;
   color: var(--text-muted);
-  padding: 0 2px;
-  margin-bottom: 6px;
 }
 
-.doc-rows-wrapper {
-  display: flex;
-  flex-direction: column;
-}
-
-.sb-row {
+.doc-row {
   display: flex;
   align-items: center;
   gap: 10px;
-          padding: 12px 14px;
-          border: 1px solid var(--border);
-          border-radius: 14px;
-          background: var(--surface);
-          cursor: pointer;
-          transition: background 0.15s ease, border-color 0.15s ease;
-        }
+  padding: 9px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.doc-row:hover {
+  background: var(--surface-2);
+}
+.doc-row + .doc-row {
+  border-top: 1px solid var(--border);
+  margin-top: 1px;
+  padding-top: 10px;
+}
+.doc-row.selected {
+  background: rgba(227, 242, 74, 0.08);
+}
 
-        .sb-row + .sb-row {
-          margin-top: 10px;
-        }
+.doc-checkbox {
+  width: 7px;
+  height: 7px;
+  border-radius: 5px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--lime-text);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.doc-checkbox.checked {
+  background: var(--lime);
+  border-color: var(--lime);
+}
+.doc-checkbox svg {
+  width: 11px;
+  height: 11px;
+}
 
-        .sb-row:hover {
-          background: var(--surface-2);
-          border-color: var(--border-strong);
-        }
-
-        .sb-row.selected {
-          background: rgba(227, 242, 74, 0.08);
-          border-color: var(--lime);
+/* Fixed-size icon "box" — overflow hidden so the inner SVG can never blow the row up */
+.doc-file-ico {
+  width: 28px;
   height: 28px;
   min-width: 28px;
   border-radius: 7px;
@@ -917,177 +1153,58 @@ const documents = Array.isArray(documentsData)
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  overflow: hidden;
 }
-
-.file-ico.pdf {
+.doc-file-ico :global(svg) {
+  width: 14px !important;
+  height: 14px !important;
+  max-width: 14px;
+  max-height: 14px;
+  display: block;
+}
+.doc-file-ico.pdf {
   background: rgba(227, 242, 74, 0.14);
   color: var(--lime);
 }
-
-.file-ico.docx,
-.file-ico.txt {
+.doc-file-ico.docx,
+.doc-file-ico.txt {
   background: var(--surface-3);
   color: var(--text-secondary);
 }
 
-.file-ico svg {
+.doc-row-text {
+  min-width: 0;
+  flex: 1;
+}
+.doc-row-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-row-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.view-all-row {
+  color: var(--text-secondary);
+}
+.view-all-ico {
+  background: var(--surface-3);
+  color: var(--lime);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.view-all-chevron {
   width: 14px;
   height: 14px;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
-
-.sb-row-text {
-          min-width: 0;
-          flex: 1;
-        }
-
-        .sb-row-title {
-          font-size: 13px;
-          font-weight: 500;
-          color: var(--text-primary);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .sb-row-sub {
-          margin-top: 1px;
-          font-size: 11.5px;
-          color: var(--text-muted);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-}
-
-/* View All */
-
-.view-all-action {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-
-  width: 100%;
-  padding: 12px;
-
-  border: 1px solid var(--border);
-  border-radius: 14px;
-
-  background: var(--surface);
-
-  cursor: pointer;
-
-  transition: .2s;
-}
-
-.view-all-action:hover {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-}
-
-.stacked-icons {
-  width: 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.stacked-icons span {
-  height: 2px;
-  background: var(--lime);
-  border-radius: 2px;
-}
-
-.stacked-icons span:nth-child(1){
-    width:100%;
-}
-
-.stacked-icons span:nth-child(2){
-    width:70%;
-}
-
-.stacked-icons span:nth-child(3){
-    width:40%;
-}
-
-.view-all-text{
-    flex:1;
-    text-align:left;
-}
-
-.view-all-text .title{
-    display:block;
-    color:var(--text-primary);
-    font-size:13px;
-    font-weight:500;
-}
-
-.view-all-text .sub{
-    display:block;
-    margin-top:2px;
-    color:var(--text-muted);
-    font-size:11px;
-}
-
-.view-all-action svg{
-    width:16px;
-    height:16px;
-    color:var(--text-muted);
-}
-
-/* Loading */
-
-.doc-list-loading{
-    display:flex;
-    align-items:center;
-    gap:8px;
-    padding:12px;
-    border-radius:14px;
-    background:var(--surface);
-    border:1px solid var(--border);
-    font-size:12px;
-    color:var(--text-muted);
-}
-
-.spinner{
-    width:14px;
-    height:14px;
-    border:2px solid var(--border);
-    border-top-color:var(--lime);
-    border-radius:50%;
-    animation:spin .8s linear infinite;
-}
-
-@keyframes spin{
-    to{
-        transform:rotate(360deg);
-    }
-}
-
-/* Empty */
-
-.doc-list-empty{
-    display:flex;
-    align-items:center;
-    gap:10px;
-
-    padding:14px;
-
-    border-radius:14px;
-
-    border:1px solid var(--border);
-
-    background:var(--surface);
-
-    color:var(--text-muted);
-}
-
-.doc-list-empty svg{
-    width:18px;
-    height:18px;
-}
-
-
-
-
 
         .main {
           flex: 1;
@@ -1481,6 +1598,10 @@ const documents = Array.isArray(documentsData)
         .composer textarea::placeholder {
           color: var(--text-muted);
         }
+        .composer textarea:disabled {
+          cursor: wait;
+          opacity: 0.7;
+        }
 
         .composer-actions {
           display: flex;
@@ -1526,6 +1647,9 @@ const documents = Array.isArray(documentsData)
           margin-top: 8px;
           padding: 0 4px;
           gap: 8px;
+        }
+        .chat-mode {
+          color: var(--text-secondary);
         }
         .composer-hint :global(kbd) {
           font-family: inherit;
@@ -1672,7 +1796,14 @@ const documents = Array.isArray(documentsData)
           background: rgba(227, 242, 74, 0.08);
         }
         
-       
+        .doc-checkbox.checked {
+          background: var(--lime);
+          border-color: var(--lime);
+        }
+        .doc-checkbox svg {
+          width: 11px;
+          height: 11px;
+        }
 
         .sb-row .file-ico {
           width: 28px;
