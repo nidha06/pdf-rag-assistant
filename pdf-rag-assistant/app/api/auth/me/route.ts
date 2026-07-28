@@ -7,11 +7,14 @@ import { NextResponse } from "next/server";
 export async function GET(){
     try{
        const cookieStore = await cookies();
+       console.log("1")
        const token = cookieStore.get("token")?.value;
+       console.log("2", token)
 
        if(!token){
         return NextResponse.json(null);
        }
+       console.log("3")
 
        const decoded = verifyToken(token);
        

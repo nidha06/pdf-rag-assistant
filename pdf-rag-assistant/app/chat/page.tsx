@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useDocmindStore,
@@ -12,7 +12,8 @@ import {
   useDocuments,
   useUploadFilesMutation,
 } from "../hooks/useKnowledgeBaseMutations";
-// import { useCurrentUser } from "../hooks/useUserQuery";
+import { useCurrentUser } from "../hooks/useUserMutations";
+import {File} from "lucide-react"
 
 /**
  * Docmind — AI document chat
@@ -31,6 +32,13 @@ import {
  * faked an upload has been removed — dropping a file onto the composer
  * is now the one upload path, and it goes straight to the real
  * /api/documents endpoint.
+ *
+ * NEW: documents in the sidebar are now selectable. Selecting a document
+ * scopes the next question to that document (sent along as `documentIds`
+ * on the chat mutation) and shows a removable chip above the composer.
+ * The sidebar only ever lists the first 5 documents — with more than 5,
+ * a "View all files" row opens a modal with the complete list, where
+ * selection works the same way.
  */
 
 /**
@@ -83,6 +91,9 @@ const doodleSvgTile = `
 
 const doodleBackground = `url("data:image/svg+xml,${encodeURIComponent(doodleSvgTile)}")`;
 
+/** How many documents to show in the sidebar before collapsing to "View all files". */
+const SIDEBAR_DOC_LIMIT = 5;
+
 /** "Maren Ruiz" -> "MR". Falls back to "?" when there's no name yet. */
 function getInitials(name?: string | null) {
   if (!name) return "?";
@@ -126,7 +137,12 @@ export default function DocmindPage() {
   const queryClient = useQueryClient();
   const sendMessageMutation = useSendMessageMutation();
   const uploadFilesMutation = useUploadFilesMutation();
- 
+
+  // NEW: which knowledge-base documents (from the sidebar) are selected to
+  // scope the next question, and whether the "view all files" modal is open.
+  // Purely additive local UI state — doesn't touch the Zustand store.
+  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [showAllDocsModal, setShowAllDocsModal] = useState(false);
 
   const {
   data: documentsData,
@@ -136,10 +152,27 @@ export default function DocmindPage() {
 
 const documents = Array.isArray(documentsData)
   ? documentsData
-  : documentsData?.documents ?? [];
+  : Array.isArray(documentsData?.documents)
+  ? documentsData.documents
+  : Array.isArray(documentsData?.data)
+  ? documentsData.data
+  : Array.isArray(documentsData?.data?.documents)
+  ? documentsData.data.documents
+  : [];
+
+  const visibleSidebarDocs = documents.slice(0, SIDEBAR_DOC_LIMIT);
+  const hasMoreDocs = documents.length > SIDEBAR_DOC_LIMIT;
+  const selectedDocs = documents.filter((d: any) => selectedDocIds.includes(d.id));
+
+  function toggleDocSelection(id: string) {
+    setSelectedDocIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
 
   // Real current user, replacing the hardcoded "Maren Ruiz" profile card.
-  // const { data: currentUser, isLoading: fals } = useCurrentUser();
+  const { data:user} = useCurrentUser();
+  console.log("USER TO THE CHAT: ",user);
    
 //   if (isLoading) {
 //   return <div>Loading...</div>;
@@ -150,7 +183,11 @@ const documents = Array.isArray(documentsData)
 
     setIsTyping(true);
     sendMessageMutation.mutate(
-      { text, attachmentIds: attachmentsForSend.map((a) => a.id) },
+      {
+        text,
+        attachmentIds: attachmentsForSend.map((a) => a.id),
+        documentIds: selectedDocIds,
+      },
       {
         onSuccess: (result) => {
           appendAiMessage(result.reply);
@@ -187,6 +224,16 @@ const documents = Array.isArray(documentsData)
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, [input]);
 
+  // Close the "all files" modal with Escape, like any modal should.
+  useEffect(() => {
+    if (!showAllDocsModal) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setShowAllDocsModal(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showAllDocsModal]);
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -220,6 +267,36 @@ const documents = Array.isArray(documentsData)
       }
     );
   }
+
+ function renderSelectableDocRow(document: any) {
+  const isSelected = selectedDocIds.includes(document.id);
+  return (
+    <div
+      className={`sb-row ${isSelected ? "selected" : ""}`}
+      key={document.id}
+      onClick={() => toggleDocSelection(document.id)}
+      role="checkbox"
+      aria-checked={isSelected}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggleDocSelection(document.id);
+        }
+      }}
+    >
+      <span className={`file-ico ${getFileKind(document.fileName)}`}>
+        <File />
+      </span>
+
+      <div className="sb-row-text">
+        <div className="sb-row-title">{document.fileName}</div>
+        <div className="sb-row-sub">{formatBytes(document.fileSize)}</div>
+      </div>
+    </div>
+  );
+}
+  
 
   return (
     <div className="app">
@@ -278,7 +355,7 @@ const documents = Array.isArray(documentsData)
                 <div className={`msg ${m.role}`} key={m.id}>
                   <div className={`msg-avatar ${m.role === "ai" ? "pixel" : ""}`}>
                     {/* {m.role === "ai" ? "AI" : getInitials(currentUser?.name)} */}
-                    nidha
+                    {user?.name}
                   </div>
                   <div className="bubble-wrap">
                     <div className="bubble">{m.content}</div>
@@ -307,25 +384,62 @@ const documents = Array.isArray(documentsData)
           {/* Input area */}
           <div className="input-area">
             <div className="input-inner">
+              {/* NEW: selected knowledge-base documents scoping the next question */}
+              {selectedDocs.length > 0 && (
+                <div className="selected-docs-bar">
+                  {selectedDocs.map((document: any) => (
+                    <div className="selected-doc-chip" key={document.id}>
+                      <span className={`file-ico ${getFileKind(document.fileName)}`}>
+                        <FileIcon />
+                      </span>
+                      <span className="selected-doc-name">{document.fileName}</span>
+                      <button
+                        type="button"
+                        className="remove-selected-doc"
+                        aria-label={`Remove ${document.fileName} from selection`}
+                        onClick={() => toggleDocSelection(document.id)}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 6 6 18" />
+                          <path d="m6 6 12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="clear-selected-docs"
+                    onClick={() => setSelectedDocIds([])}
+                  >
+                    Clear all
+                  </button>
+                </div>
+              )}
+
               {attachments.length > 0 && (
                 <div className="attachments-preview">
-                 {documents?.map((document: any) => (
-  <div className="sb-row" key={document.id}>
-    <span className="file-ico">
-      <FileIcon />
-    </span>
-
-    <div className="sb-row-text">
-      <div className="sb-row-title">
-        {document.fileName}
-      </div>
-
-      <div className="sb-row-sub">
-        {formatBytes(document.fileSize)}
-      </div>
-    </div>
-  </div>
-))}
+                  {attachments.map((a: any) => (
+                    <div className="attachment-chip" key={a.id}>
+                      {/* <span className="file-ico">
+                        <FileIcon />
+                      </span> */}
+                      {/* <div className="file-meta">
+                        <div className="file-name">{a.name}</div>
+                        <div className="file-size">{a.size}</div>
+                      </div> */}
+                      {/* <button
+                        type="button"
+                        className="remove-btn"
+                        aria-label={`Remove ${a.name}`}
+                        onClick={() => removeAttachment(a.id)}
+                      > */}
+                        {/* <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 6 6 18" />
+                          <path d="m6 6 12 12" />
+                        </svg>
+                      </button> */}
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -380,59 +494,69 @@ const documents = Array.isArray(documentsData)
               </div>
               <div className="profile-meta">
                 <div className="profile-name">
-                  {/* {userLoading ? "Loading…" : currentUser?.name ?? "Unknown user"} */}
-                  nidha
+                  {user?.name}
                 </div>
                 <div className="profile-email">
-                  {/* {userLoading ? "" : currentUser?.email ?? ""} */}
-                  nidha@gmail.com
+                  {user?.email}
+                 
                 </div>
               </div>
             </div>
-            <div className="workspace-row">
-              <span className="workspace-ico">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <rect x="3" y="3" width="7" height="7" />
-                  <rect x="14" y="3" width="7" height="7" />
-                  <rect x="3" y="14" width="7" height="7" />
-                  <rect x="14" y="14" width="7" height="7" />
-                </svg>
-              </span>
-              <div>
-                <div className="workspace-name">Northfield co.</div>
-                <div className="workspace-sub">Team workspace</div>
-              </div>
-            </div>
+            
           </div>
-
-         <div className="sidebar-section-label">Documents</div>
+<div className="sidebar-section-label">Knowledge Base</div>
+<div className="sidebar-subtitle">
+  {isLoading
+    ? "Loading documents…"
+    : error
+    ? `Unable to load documents: ${error?.message || "unknown"}`
+    : `${documents.length} documents loaded`}
+</div>
 
 <div className="sb-card">
-
-  {isLoading && <p>Loading...</p>}
-
-  {!isLoading && documents?.length === 0 && (
-    <p>No documents uploaded</p>
+  {isLoading && (
+    <div className="doc-list-loading">
+      <span className="spinner" />
+      Updating library...
+    </div>
   )}
 
-  {documents?.map((document: any) => (
-    <div className="sb-row" key={document.id}>
-      <span className="file-ico">
-        <FileIcon />
-      </span>
-
-      <div className="sb-row-text">
-        <div className="sb-row-title">
-          {document.fileName}
-        </div>
-
-        <div className="sb-row-sub">
-          {formatBytes(document.fileSize)}
-        </div>
-      </div>
+  {!isLoading && !error && visibleSidebarDocs.length === 0 && (
+    <div className="doc-list-empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="9" y1="15" x2="15" y2="15" />
+      </svg>
+      <p>No documents found</p>
     </div>
-  ))}
+  )}
 
+  {!isLoading && !error && visibleSidebarDocs.length > 0 && (
+    <div className="doc-rows-wrapper">
+      {visibleSidebarDocs.map((document: any) => renderSelectableDocRow(document))}
+    </div>
+  )}
+
+  {hasMoreDocs && (
+    <button
+      className="view-all-action"
+      onClick={() => setShowAllDocsModal(true)}
+    >
+      <div className="stacked-icons">
+        <span />
+        <span />
+        <span />
+      </div>
+      <div className="view-all-text">
+        <span className="title">View all {documents.length} files</span>
+        <span className="sub">Manage your knowledge base</span>
+      </div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+        <path d="m9 18 6-6-6-6" />
+      </svg>
+    </button>
+  )}
 </div>
 
           <div>
@@ -490,6 +614,60 @@ const documents = Array.isArray(documentsData)
           </div>
         </aside>
       </div>
+
+      {/* ===== "View all files" modal ===== */}
+      {showAllDocsModal && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setShowAllDocsModal(false)}
+        >
+          <div
+            className="modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="All documents"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3>All documents</h3>
+              <button
+                type="button"
+                className="modal-close"
+                aria-label="Close"
+                onClick={() => setShowAllDocsModal(false)}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {documents.length === 0 ? (
+                <p className="modal-empty">No documents uploaded</p>
+              ) : (
+                documents.map((document: any) => renderSelectableDocRow(document))
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <span className="modal-footer-count">
+                {selectedDocIds.length > 0
+                  ? `${selectedDocIds.length} selected`
+                  : "None selected"}
+              </span>
+              <button
+                type="button"
+                className="modal-done-btn"
+                onClick={() => setShowAllDocsModal(false)}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style jsx global>{`
         @import url("https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
@@ -550,6 +728,7 @@ const documents = Array.isArray(documentsData)
           display: flex;
           flex-direction: column;
           height: 100vh;
+          height: 100dvh;
           width: 100vw;
           background: var(--bg);
         }
@@ -563,11 +742,13 @@ const documents = Array.isArray(documentsData)
           padding: 0 var(--sp-3);
           border-bottom: 1px solid var(--border);
           background: var(--surface);
+          gap: 12px;
         }
         .brand {
           display: flex;
           align-items: center;
           gap: 12px;
+          flex-shrink: 0;
         }
         .brand-mark {
           width: 32px;
@@ -593,6 +774,7 @@ const documents = Array.isArray(documentsData)
           max-width: 420px;
           margin: 0 var(--sp-4);
           position: relative;
+          min-width: 0;
         }
         .header-search input {
           width: 100%;
@@ -625,10 +807,18 @@ const documents = Array.isArray(documentsData)
           height: 16px;
         }
 
+
+
+
+
+
+
+
         .header-actions {
           display: flex;
           align-items: center;
           gap: 6px;
+          flex-shrink: 0;
         }
         .icon-btn {
           width: 36px;
@@ -663,6 +853,241 @@ const documents = Array.isArray(documentsData)
           background: var(--lime);
           border: 1.5px solid var(--surface);
         }
+       
+
+        
+
+
+.sb-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.doc-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.sidebar-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 2px;
+  margin-bottom: 6px;
+}
+
+.doc-rows-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.sb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+          padding: 12px 14px;
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          background: var(--surface);
+          cursor: pointer;
+          transition: background 0.15s ease, border-color 0.15s ease;
+        }
+
+        .sb-row + .sb-row {
+          margin-top: 10px;
+        }
+
+        .sb-row:hover {
+          background: var(--surface-2);
+          border-color: var(--border-strong);
+        }
+
+        .sb-row.selected {
+          background: rgba(227, 242, 74, 0.08);
+          border-color: var(--lime);
+  height: 28px;
+  min-width: 28px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.file-ico.pdf {
+  background: rgba(227, 242, 74, 0.14);
+  color: var(--lime);
+}
+
+.file-ico.docx,
+.file-ico.txt {
+  background: var(--surface-3);
+  color: var(--text-secondary);
+}
+
+.file-ico svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sb-row-text {
+          min-width: 0;
+          flex: 1;
+        }
+
+        .sb-row-title {
+          font-size: 13px;
+          font-weight: 500;
+          color: var(--text-primary);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .sb-row-sub {
+          margin-top: 1px;
+          font-size: 11.5px;
+          color: var(--text-muted);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+}
+
+/* View All */
+
+.view-all-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  width: 100%;
+  padding: 12px;
+
+  border: 1px solid var(--border);
+  border-radius: 14px;
+
+  background: var(--surface);
+
+  cursor: pointer;
+
+  transition: .2s;
+}
+
+.view-all-action:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.stacked-icons {
+  width: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.stacked-icons span {
+  height: 2px;
+  background: var(--lime);
+  border-radius: 2px;
+}
+
+.stacked-icons span:nth-child(1){
+    width:100%;
+}
+
+.stacked-icons span:nth-child(2){
+    width:70%;
+}
+
+.stacked-icons span:nth-child(3){
+    width:40%;
+}
+
+.view-all-text{
+    flex:1;
+    text-align:left;
+}
+
+.view-all-text .title{
+    display:block;
+    color:var(--text-primary);
+    font-size:13px;
+    font-weight:500;
+}
+
+.view-all-text .sub{
+    display:block;
+    margin-top:2px;
+    color:var(--text-muted);
+    font-size:11px;
+}
+
+.view-all-action svg{
+    width:16px;
+    height:16px;
+    color:var(--text-muted);
+}
+
+/* Loading */
+
+.doc-list-loading{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:12px;
+    border-radius:14px;
+    background:var(--surface);
+    border:1px solid var(--border);
+    font-size:12px;
+    color:var(--text-muted);
+}
+
+.spinner{
+    width:14px;
+    height:14px;
+    border:2px solid var(--border);
+    border-top-color:var(--lime);
+    border-radius:50%;
+    animation:spin .8s linear infinite;
+}
+
+@keyframes spin{
+    to{
+        transform:rotate(360deg);
+    }
+}
+
+/* Empty */
+
+.doc-list-empty{
+    display:flex;
+    align-items:center;
+    gap:10px;
+
+    padding:14px;
+
+    border-radius:14px;
+
+    border:1px solid var(--border);
+
+    background:var(--surface);
+
+    color:var(--text-muted);
+}
+
+.doc-list-empty svg{
+    width:18px;
+    height:18px;
+}
+
+
+
+
 
         .main {
           flex: 1;
@@ -875,6 +1300,85 @@ const documents = Array.isArray(documentsData)
           margin: 0 auto;
         }
 
+        /* NEW: chips for documents selected from the sidebar/modal, shown above the composer */
+        .selected-docs-bar {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+        .selected-doc-chip {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: rgba(227, 242, 74, 0.1);
+          border: 1px solid var(--lime-dim);
+          border-radius: var(--radius-sm);
+          padding: 6px 8px 6px 8px;
+          font-size: 12.5px;
+          max-width: 100%;
+        }
+        .selected-doc-chip .file-ico {
+          width: 22px;
+          height: 22px;
+          border-radius: 6px;
+          background: rgba(227, 242, 74, 0.18);
+          color: var(--lime);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .selected-doc-chip .file-ico :global(svg) {
+          width: 12px;
+          height: 12px;
+        }
+        .selected-doc-name {
+          font-weight: 500;
+          color: var(--text-primary);
+          max-width: 160px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .remove-selected-doc {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--text-muted);
+          cursor: pointer;
+          background: transparent;
+          border: none;
+          flex-shrink: 0;
+          transition: background 0.15s ease, color 0.15s ease;
+        }
+        .remove-selected-doc:hover {
+          background: var(--surface-3);
+          color: var(--lime);
+        }
+        .remove-selected-doc :global(svg) {
+          width: 11px;
+          height: 11px;
+        }
+        .clear-selected-docs {
+          font-size: 11.5px;
+          color: var(--text-muted);
+          background: none;
+          border: none;
+          cursor: pointer;
+          padding: 4px 2px;
+          text-decoration: underline;
+          text-underline-offset: 2px;
+          flex-shrink: 0;
+        }
+        .clear-selected-docs:hover {
+          color: var(--lime);
+        }
+
         .attachments-preview {
           display: flex;
           flex-wrap: wrap;
@@ -1021,6 +1525,7 @@ const documents = Array.isArray(documentsData)
           color: var(--text-muted);
           margin-top: 8px;
           padding: 0 4px;
+          gap: 8px;
         }
         .composer-hint :global(kbd) {
           font-family: inherit;
@@ -1139,12 +1644,7 @@ const documents = Array.isArray(documentsData)
           margin-bottom: 6px;
         }
 
-        .sb-card {
-          background: var(--surface);
-          border: 1px solid var(--border);
-          border-radius: var(--radius);
-          padding: 6px;
-        }
+       
 
         .sb-row {
           display: flex;
@@ -1163,6 +1663,16 @@ const documents = Array.isArray(documentsData)
           margin-top: 1px;
           padding-top: 10px;
         }
+
+        /* NEW: checkbox indicator + selected state for selectable document rows */
+        .sb-row.selectable {
+          outline: none;
+        }
+        .sb-row.selected {
+          background: rgba(227, 242, 74, 0.08);
+        }
+        
+       
 
         .sb-row .file-ico {
           width: 28px;
@@ -1207,6 +1717,23 @@ const documents = Array.isArray(documentsData)
           color: var(--text-muted);
           margin-top: 1px;
         }
+
+        // /* NEW: "view all files" row */
+        // .view-all-row {
+        //   color: var(--text-secondary);
+        // }
+        // .view-all-ico {
+        //   background: var(--surface-3);
+        //   color: var(--lime);
+        //   font-size: 10.5px;
+        //   font-weight: 700;
+        // }
+        // .view-all-chevron {
+        //   width: 14px;
+        //   height: 14px;
+        //   color: var(--text-muted);
+        //   flex-shrink: 0;
+        // }
 
         .convo-dot {
           width: 6px;
@@ -1309,6 +1836,104 @@ const documents = Array.isArray(documentsData)
           width: 38%;
         }
 
+        /* NEW: "view all files" modal */
+        .modal-backdrop {
+          position: fixed;
+          inset: 0;
+          background: rgba(8, 8, 6, 0.6);
+          backdrop-filter: blur(2px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 100;
+          padding: var(--sp-3);
+          animation: fadeIn 0.15s ease;
+        }
+        .modal-panel {
+          width: 100%;
+          max-width: 460px;
+          max-height: min(640px, 86vh);
+          background: var(--surface);
+          border: 1px solid var(--border-strong);
+          border-radius: var(--radius-lg);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+        }
+        .modal-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: var(--sp-2) var(--sp-3);
+          border-bottom: 1px solid var(--border);
+          flex-shrink: 0;
+        }
+        .modal-header h3 {
+          font-size: 15px;
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+        .modal-close {
+          width: 30px;
+          height: 30px;
+          border-radius: var(--radius-sm);
+          border: none;
+          background: transparent;
+          color: var(--text-secondary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          flex-shrink: 0;
+          transition: background 0.15s ease, color 0.15s ease;
+        }
+        .modal-close:hover {
+          background: var(--surface-3);
+          color: var(--lime);
+        }
+        .modal-close svg {
+          width: 15px;
+          height: 15px;
+        }
+        .modal-body {
+          flex: 1;
+          overflow-y: auto;
+          padding: 6px var(--sp-2);
+        }
+        .modal-empty {
+          color: var(--text-muted);
+          font-size: 13px;
+          padding: var(--sp-3);
+          text-align: center;
+        }
+        .modal-footer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: var(--sp-2) var(--sp-3);
+          border-top: 1px solid var(--border);
+          flex-shrink: 0;
+        }
+        .modal-footer-count {
+          font-size: 12px;
+          color: var(--text-muted);
+        }
+        .modal-done-btn {
+          background: var(--lime);
+          color: var(--lime-text);
+          border: none;
+          border-radius: var(--radius-sm);
+          padding: 8px 16px;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: background 0.15s ease;
+        }
+        .modal-done-btn:hover {
+          background: var(--lime-strong);
+        }
+
         :global(::-webkit-scrollbar) {
           width: 8px;
           height: 8px;
@@ -1324,12 +1949,100 @@ const documents = Array.isArray(documentsData)
           background: transparent;
         }
 
+        /* ===== Responsive breakpoints ===== */
+
+        /* Tablets: narrower sidebar instead of full 300px */
+        @media (max-width: 1180px) {
+          .sidebar {
+            flex-basis: 260px;
+          }
+        }
+
+        /* Small tablets / large phones: drop the sidebar, header search shrinks */
         @media (max-width: 980px) {
           .sidebar {
             display: none;
           }
           .chat-col {
             border-right: none;
+          }
+          .header-search {
+            margin: 0 var(--sp-2);
+          }
+        }
+
+        /* Phones: tighten up header, bubbles, composer, chat padding */
+        @media (max-width: 640px) {
+          header {
+            height: 56px;
+            padding: 0 var(--sp-2);
+            gap: 8px;
+          }
+          .brand-name {
+            display: none;
+          }
+          .header-search {
+            margin: 0;
+          }
+          .header-search input {
+            height: 34px;
+            font-size: 13px;
+            padding-left: 34px;
+          }
+          .header-actions {
+            gap: 2px;
+          }
+
+          .chat-inner {
+            padding: 0 var(--sp-2);
+            gap: var(--sp-2);
+          }
+          .bubble-wrap {
+            max-width: 88%;
+          }
+          .bubble {
+            font-size: 14px;
+            padding: 10px 12px;
+          }
+
+          .input-area {
+            padding: var(--sp-1) var(--sp-2) var(--sp-2);
+          }
+          .composer {
+            padding: 8px 8px 8px 12px;
+            border-radius: var(--radius);
+          }
+          .composer-hint {
+            flex-direction: column;
+            gap: 2px;
+          }
+
+          .selected-doc-chip {
+            font-size: 12px;
+          }
+          .selected-doc-name {
+            max-width: 110px;
+          }
+
+          .modal-backdrop {
+            padding: 0;
+            align-items: flex-end;
+          }
+          .modal-panel {
+            max-width: 100%;
+            width: 100%;
+            max-height: 82vh;
+            border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+          }
+        }
+
+        /* Very small phones */
+        @media (max-width: 380px) {
+          .header-search {
+            display: none;
+          }
+          .bubble-wrap {
+            max-width: 94%;
           }
         }
       `}</style>

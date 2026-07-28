@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuthStore } from "../../store/authStore";
 import { useSigninMutation } from "../../hooks/useAuthMutations";
-import { useRouter } from "next/navigation";
+import { useCurrentUser } from "../../hooks/useUserMutations";
 
 /**
  * Docmind — Sign in
@@ -15,9 +17,11 @@ import { useRouter } from "next/navigation";
  * lime brand color, dark surfaces. No external CSS needed — styling
  * is done with styled-jsx.
  *
- * All form state (email, password, visibility, "remember me",
- * submitting, error) lives in `useLoginStore` (Zustand) — this file
- * only renders and wires up event handlers.
+ * The auth store (store/authStore.ts) only holds the signed-in
+ * `user` — it's not the right place for transient login-form state,
+ * so email / password / showPassword / remember live as local
+ * component state here instead. `canSubmit` is derived from that
+ * local state rather than pulled off the store.
  */
 
 function EyeIcon({ off }: { off: boolean }) {
@@ -132,17 +136,19 @@ const doodleSvgTile = `
 const doodleBackground = `url("data:image/svg+xml,${encodeURIComponent(doodleSvgTile)}")`;
 
 export default function LoginPage() {
-   const router = useRouter();
-  const email = useAuthStore((s) => s.email);
-  const password = useAuthStore((s) => s.password);
-  const showPassword = useAuthStore((s) => s.showPassword);
-  const remember = useAuthStore((s) => s.remember);
- 
-  const setEmail = useAuthStore((s) => s.setEmail);
-  const setPassword = useAuthStore((s) => s.setPassword);
-  const toggleShowPassword = useAuthStore((s) => s.toggleShowPassword);
-  const setRemember = useAuthStore((s) => s.setRemember);
-  const canSubmit = useAuthStore((s) => s.canSubmit());
+  const router = useRouter();
+  const setUser = useAuthStore((s) => s.setUser);
+
+  // Login-form fields are transient UI state, not app-wide state, so
+  // they live here rather than on the auth store (which only tracks
+  // the signed-in `user`).
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(false);
+
+  const toggleShowPassword = () => setShowPassword((v) => !v);
+  const canSubmit = email.trim().length > 0 && password.length > 0;
 
   const loginMutation = useSigninMutation();
   const submitting = loginMutation.isPending;
@@ -152,17 +158,32 @@ export default function LoginPage() {
       : "Something went wrong. Please try again."
     : "";
 
+  // If a session already exists (cookie still valid), skip the form
+  // and go straight in — populating the store from the fetched user
+  // rather than from stale local state.
+  const { data: existingUser, isSuccess: hasExistingUser } = useCurrentUser();
+  useEffect(() => {
+    if (hasExistingUser && existingUser) {
+      setUser(existingUser);
+      router.replace("/documentManager");
+    }
+  }, [hasExistingUser, existingUser, router, setUser]);
+
   function handleFormSubmit(e: React.SyntheticEvent) {
     e.preventDefault();
+    if (!canSubmit || submitting) return;
 
     loginMutation.mutate(
-      {email,password},
-      {onSuccess: ()=>{
-       router.push("/documentManager");
-      },
-    }
+      { email, password },
+      {
+        onSuccess: (data) => {
+          // `data` here is the user returned by /api/auth/login itself —
+          // not the (possibly stale) useCurrentUser() result above.
+          if (data) setUser(data);
+          router.push("/documentManager");
+        },
+      }
     );
-   
   }
 
   return (
@@ -464,8 +485,7 @@ export default function LoginPage() {
           </div>
         </div>
       </div>
-
-      <style jsx global>{`
+ <style jsx global>{`
         @import url("https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;500;600;700&display=swap");
 
         :root {
@@ -1000,3 +1020,4 @@ export default function LoginPage() {
     </div>
   );
 }
+ 

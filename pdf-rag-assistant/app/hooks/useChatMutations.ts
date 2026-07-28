@@ -15,6 +15,7 @@ import { useMutation } from "@tanstack/react-query";
 type SendMessagePayload = {
   text: string;
   attachmentIds: string[];
+  documentIds?: string[];
 };
 
 type SendMessageResult = {

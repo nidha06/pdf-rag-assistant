@@ -6,9 +6,22 @@ export async function POST(request:Request){
     try{
       console.log('reached to signup route');
       const body = await request.json();
-      const result = await signupService(body)
+      const {user,token} = await signupService(body)
       
-      return NextResponse.json(result);
+       const respones = NextResponse.json({
+            success: true,
+            user,
+        })
+
+        respones.cookies.set("token",token,{
+            httpOnly:true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite:"strict",
+            maxAge:  60*60*24*7,
+            path:"/",
+        });
+    
+        return respones;
     }catch(error){
       console.log(error);
        return NextResponse.json(

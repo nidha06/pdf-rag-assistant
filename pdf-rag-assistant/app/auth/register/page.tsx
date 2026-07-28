@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useAuthStore } from "../../store/authStore";
 import { useSignupMutation } from "../../hooks/useAuthMutations";
 
@@ -13,10 +14,11 @@ import { useSignupMutation } from "../../hooks/useAuthMutations";
  * same alien-touched illustration and doodle background — so the
  * two screens read as one continuous flow.
  *
- * All form state (name, email, password, confirm, visibility,
- * agree-to-terms, submitting, error) lives in the shared
- * `useAuthStore` (Zustand, sign-up slice) — this file only renders
- * and wires up event handlers.
+ * The auth store (store/authStore.ts) only holds the signed-in
+ * `user` — it has no signup-form slice. All form state (name,
+ * email, password, confirm, visibility, agree-to-terms) is local
+ * component state here instead; `passwordsMatch` and `canSubmit`
+ * are derived from it rather than pulled off the store.
  */
 
 function EyeIcon({ off }: { off: boolean }) {
@@ -138,21 +140,31 @@ const doodleSvgTile = `
 const doodleBackground = `url("data:image/svg+xml,${encodeURIComponent(doodleSvgTile)}")`;
 
 export default function SignupPage() {
-  const name = useAuthStore((s) => s.signupName);
-  const email = useAuthStore((s) => s.signupEmail);
-  const password = useAuthStore((s) => s.signupPassword);
-  const confirm = useAuthStore((s) => s.signupConfirm);
-  const showPassword = useAuthStore((s) => s.showSignupPassword);
-  const agree = useAuthStore((s) => s.agree);
+  const setUser = useAuthStore((s) => s.setUser);
 
-  const setName = useAuthStore((s) => s.setSignupName);
-  const setEmail = useAuthStore((s) => s.setSignupEmail);
-  const setPassword = useAuthStore((s) => s.setSignupPassword);
-  const setConfirm = useAuthStore((s) => s.setSignupConfirm);
-  const toggleShowPassword = useAuthStore((s) => s.toggleShowSignupPassword);
-  const setAgree = useAuthStore((s) => s.setAgree);
-  const passwordsMatch = useAuthStore((s) => s.passwordsMatch());
-  const canSubmit = useAuthStore((s) => s.canSubmitSignup());
+  // Signup-form fields are transient UI state, not app-wide state —
+  // the auth store only tracks the signed-in `user`, so it has no
+  // slice for these. They live here as local component state instead.
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [agree, setAgree] = useState(false);
+
+  const toggleShowPassword = () => setShowPassword((v) => !v);
+
+  // Only flag a mismatch once the person has actually started typing
+  // a confirmation — otherwise this would show an error on load.
+  const passwordsMatch = confirm.length === 0 || password === confirm;
+
+  const canSubmit =
+    name.trim().length > 0 &&
+    email.trim().length > 0 &&
+    password.length >= 6 &&
+    confirm.length > 0 &&
+    password === confirm &&
+    agree;
 
   const signupMutation = useSignupMutation();
   const submitting = signupMutation.isPending;
@@ -168,7 +180,9 @@ export default function SignupPage() {
     signupMutation.mutate(
       { name, email, password },
       {
-        onSuccess: () => {
+        onSuccess: (data) => {
+          if (data) setUser(data);
+          console.log("the data is stored successfullyyy")
           window.location.href = "/documentManager";
         },
       }
