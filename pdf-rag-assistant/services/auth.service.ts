@@ -13,7 +13,6 @@ type signupData = {
     password: string;
 }
 export async function signinService(data:signinData) {
-    console.log("This is service section")
     const user = await prisma.user.findUnique({
         where:{
             email:data.email
@@ -32,6 +31,10 @@ export async function signinService(data:signinData) {
         throw new Error("invalid password");
     }
 
+    const hasDocuments = (await prisma.document.count({
+        where: { userId: user.id },
+    })) > 0;
+
     const token = generateToken({
         id: user.id,
         email: user.email,
@@ -41,12 +44,13 @@ export async function signinService(data:signinData) {
             id: user.id,
         name: user.name,
         email: user.email,
+        avatarSeed: user.avatarSeed,
+        hasDocuments,
         },
         token,
     }
 }
 export async function signupService(data:signupData){
-    console.log("this is sighnup service");
     const existingUser = await prisma.user.findUnique({
         where:{
             email: data.email,
@@ -76,6 +80,8 @@ export async function signupService(data:signupData){
             id: user.id,
             name: user.name,
             email: user.email,
+            avatarSeed: user.avatarSeed,
+            hasDocuments: false,
 
         },
         token,

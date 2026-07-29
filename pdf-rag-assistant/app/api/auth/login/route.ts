@@ -3,12 +3,9 @@ import { signinService } from "@/services/auth.service";
 
 export async function POST(request:Request){
     try{
-        console.log("reached to API")
         const body = await request.json();
 
         const {user,token} = await signinService(body);
-
-        console.log("token :", token);
 
         const respones = NextResponse.json({
             success: true,

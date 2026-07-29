@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "../../store/authStore";
 import { useSigninMutation } from "../../hooks/useAuthMutations";
 import { useCurrentUser } from "../../hooks/useUserMutations";
@@ -137,6 +138,7 @@ const doodleBackground = `url("data:image/svg+xml,${encodeURIComponent(doodleSvg
 
 export default function LoginPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const setUser = useAuthStore((s) => s.setUser);
 
   // Login-form fields are transient UI state, not app-wide state, so
@@ -165,7 +167,7 @@ export default function LoginPage() {
   useEffect(() => {
     if (hasExistingUser && existingUser) {
       setUser(existingUser);
-      router.replace("/documentManager");
+      router.replace(existingUser.hasDocuments ? "/chat" : "/documentManager");
     }
   }, [hasExistingUser, existingUser, router, setUser]);
 
@@ -179,8 +181,11 @@ export default function LoginPage() {
         onSuccess: (data) => {
           // `data` here is the user returned by /api/auth/login itself —
           // not the (possibly stale) useCurrentUser() result above.
-          if (data) setUser(data);
-          router.push("/documentManager");
+          if (data) {
+            setUser(data);
+            queryClient.setQueryData(["current-user"], data);
+          }
+          router.push(data.hasDocuments ? "/chat" : "/documentManager");
         },
       }
     );

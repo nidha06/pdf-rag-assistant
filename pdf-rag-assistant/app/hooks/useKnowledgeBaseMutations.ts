@@ -32,9 +32,17 @@
     })
     }
 
-    export function useDocuments(){
+export function useDocuments(){
         return useQuery({
             queryKey:["documents"],
             queryFn:getDocumentRequest,
-        })
+    })
     }
+
+export async function deleteDocumentRequest(documentId: string) {
+    await axios.delete("/api/documents", { params: { id: documentId } });
+}
+
+export function useDeleteDocumentMutation() {
+    return useMutation({ mutationFn: deleteDocumentRequest });
+}

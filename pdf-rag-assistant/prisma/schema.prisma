@@ -20,6 +20,7 @@ model User {
   password  String
   provider  String?
   role      String   @default("USER")
+  avatarSeed String  @default(cuid())
   createdAt DateTime @default(now())
 
   documents Document[]
@@ -31,19 +32,20 @@ model Document {
   fileName   String
   fileUrl    String
   fileSize   Int
-  status     String
+  status     String   @default("PROCESSING")
   uploadedAt DateTime @default(now())
 
   userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   chunks DocumentChunk[]
 }
 
 model Chat {
-  id       String   @id @default(cuid())
-  title    String
-  createAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  title       String
+  documentIds String[] @default([])
+  createAt    DateTime @default(now())
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)

@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
 import { createDocument } from "@/services/doc.service";
 import { getDocuments } from "@/services/doc.service";
+import { deleteDocument } from "@/services/doc.service";
 import { cookies } from "next/headers";
 import { verifyToken } from "@/lib/jwt";
-import { supabase } from "@/lib/supabase";
 
+function isPdfFile(file: File) {
+  return (
+    file.type === "application/pdf" ||
+    file.name.toLowerCase().endsWith(".pdf")
+  );
+}
 
 
 export async function POST(request: Request) {
@@ -34,37 +40,24 @@ const userId = decoded.id;
   );
 }
 
+const invalidFiles = files.filter((file) => !isPdfFile(file));
+
+if (invalidFiles.length > 0) {
+  return NextResponse.json(
+    {
+      message: "Only PDF files are supported",
+      invalidFiles: invalidFiles.map((file) => file.name),
+    },
+    { status: 400 }
+  );
+}
+
 const documents = [];
 
 for (const file of files) {
-  // Create a unique file name
-  const fileName = `${Date.now()}-${file.name}`;
-
-  // Upload to Supabase Storage
-  const { error } = await supabase.storage
-    .from("documents")
-    .upload(fileName, file);
-
-  if (error) {
-    console.error(error);
-
-    return NextResponse.json(
-      { message: "Failed to upload file to Supabase" },
-      { status: 500 }
-    );
-  }
-
-  // Get the public URL
-  const { data } = supabase.storage
-    .from("documents")
-    .getPublicUrl(fileName);
-
-  // Save metadata to PostgreSQL
+  // createDocument uploads the file, creates the database row, and indexes it.
   const document = await createDocument({
-    fileName: file.name,
-    fileUrl: data.publicUrl,
-    fileSize: file.size,
-    status: "UPLOADED",
+    file,
     userId,
   });
 
@@ -109,6 +102,33 @@ export async function GET() {
 
     return NextResponse.json(
       { message: "Something went wrong" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const token = (await cookies()).get("token")?.value;
+
+    if (!token) {
+      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    }
+
+    const documentId = new URL(request.url).searchParams.get("id");
+
+    if (!documentId) {
+      return NextResponse.json({ message: "Document ID is required" }, { status: 400 });
+    }
+
+    const { id: userId } = verifyToken(token);
+    await deleteDocument(documentId, userId);
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Document delete error:", error);
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "Failed to delete document" },
       { status: 500 }
     );
   }

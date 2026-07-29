@@ -28,16 +28,18 @@ type AuthUser = {
   id: string;
   name: string;
   email: string;
+  avatarSeed: string;
+  hasDocuments: boolean;
 };
 
 export const signinRequest = async (payload: LoginPayload): Promise<AuthUser> => {
   const response = await axios.post("/api/auth/login", payload);
-  return response.data;
+  return response.data.user;
 };
 
 export const signupRequest = async (payload: SignupPayload): Promise<AuthUser> => {
   const response = await axios.post("/api/auth/signup", payload);
-  return response.data;
+  return response.data.user;
 };
 
 export function useSigninMutation() {

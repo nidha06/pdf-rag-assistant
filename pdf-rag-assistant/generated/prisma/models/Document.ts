@@ -296,7 +296,7 @@ export type DocumentCreateInput = {
   fileName: string
   fileUrl: string
   fileSize: number
-  status: string
+  status?: string
   uploadedAt?: Date | string
   user: Prisma.UserCreateNestedOneWithoutDocumentsInput
   chunks?: Prisma.DocumentChunkCreateNestedManyWithoutDocumentInput
@@ -307,7 +307,7 @@ export type DocumentUncheckedCreateInput = {
   fileName: string
   fileUrl: string
   fileSize: number
-  status: string
+  status?: string
   uploadedAt?: Date | string
   userId: string
   chunks?: Prisma.DocumentChunkUncheckedCreateNestedManyWithoutDocumentInput
@@ -340,7 +340,7 @@ export type DocumentCreateManyInput = {
   fileName: string
   fileUrl: string
   fileSize: number
-  status: string
+  status?: string
   uploadedAt?: Date | string
   userId: string
 }
@@ -486,7 +486,7 @@ export type DocumentCreateWithoutUserInput = {
   fileName: string
   fileUrl: string
   fileSize: number
-  status: string
+  status?: string
   uploadedAt?: Date | string
   chunks?: Prisma.DocumentChunkCreateNestedManyWithoutDocumentInput
 }
@@ -496,7 +496,7 @@ export type DocumentUncheckedCreateWithoutUserInput = {
   fileName: string
   fileUrl: string
   fileSize: number
-  status: string
+  status?: string
   uploadedAt?: Date | string
   chunks?: Prisma.DocumentChunkUncheckedCreateNestedManyWithoutDocumentInput
 }
@@ -545,7 +545,7 @@ export type DocumentCreateWithoutChunksInput = {
   fileName: string
   fileUrl: string
   fileSize: number
-  status: string
+  status?: string
   uploadedAt?: Date | string
   user: Prisma.UserCreateNestedOneWithoutDocumentsInput
 }
@@ -555,7 +555,7 @@ export type DocumentUncheckedCreateWithoutChunksInput = {
   fileName: string
   fileUrl: string
   fileSize: number
-  status: string
+  status?: string
   uploadedAt?: Date | string
   userId: string
 }
@@ -601,7 +601,7 @@ export type DocumentCreateManyUserInput = {
   fileName: string
   fileUrl: string
   fileSize: number
-  status: string
+  status?: string
   uploadedAt?: Date | string
 }
 

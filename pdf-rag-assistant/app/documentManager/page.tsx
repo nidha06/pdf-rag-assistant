@@ -94,13 +94,27 @@ function FileIcon() {
 export default function KnowledgeBasePage() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [fileError, setFileError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const {data:user} = useCurrentUser()
   const router = useRouter();
   
   console.log("USER DETAILS: ",user);
   function addFiles(fileList: FileList | File[]) {
-    const incoming = Array.from(fileList).map((f) => ({
+    const selectedFiles = Array.from(fileList);
+    const pdfFiles = selectedFiles.filter(
+      (file) =>
+        file.type === "application/pdf" ||
+        file.name.toLowerCase().endsWith(".pdf")
+    );
+
+    if (pdfFiles.length !== selectedFiles.length) {
+      setFileError("Only PDF files are supported.");
+    } else {
+      setFileError("");
+    }
+
+    const incoming = pdfFiles.map((f) => ({
       id: crypto.randomUUID(),
       name: f.name,
       size: formatSize(f.size),
@@ -204,6 +218,7 @@ function handleContinue() {
                 </svg>
               </div>
               <div className="dropzone-title">Drag & drop files here</div>
+              <div className="dropzone-sub">PDF files only</div>
               <div className="dropzone-sub">or</div>
               <button
                 className="browse-btn"
@@ -219,12 +234,15 @@ function handleContinue() {
                 ref={fileInputRef}
                 type="file"
                 multiple
+                accept="application/pdf,.pdf"
                 onChange={(e) => {
                   if (e.target.files?.length) addFiles(e.target.files);
                   e.target.value = "";
                 }}
               />
             </div>
+
+            {fileError && <p role="alert">{fileError}</p>}
 
             {files.length > 0 && (
               <div className="file-list">

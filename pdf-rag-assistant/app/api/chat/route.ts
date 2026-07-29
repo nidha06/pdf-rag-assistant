@@ -1,12 +1,70 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { generateAnswer } from "@/services/gemini.service";
+import { prisma } from "@/lib/prisma";
+import { verifyToken } from "@/lib/jwt";
+import {
+  askSelectedDocuments,
+} from "@/services/rag.service";
+
 
 type ChatHistoryMessage = {
   role: "user" | "assistant";
   content: string;
 };
 
+function isCasualGeneralMessage(question: string) {
+  const normalized = question
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (new Set([
+    "hi", "hello", "hey", "hai", "good morning", "good afternoon",
+    "good evening", "how are you", "who are you", "what are you",
+    "what can you do", "what do you do", "whats your name", "what is your name",
+    "tell me a joke", "tell a joke", "thanks", "thank you", "bye", "goodbye",
+  ]).has(normalized)) {
+    return true;
+  }
+
+  return /^(hi|hello|hey|hai|thanks|thank you|bye|goodbye)\b/.test(normalized);
+}
+
+function getRateLimitDetails(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+
+  const candidate = error as {
+    statusCode?: unknown;
+    message?: unknown;
+    error?: { message?: unknown; code?: unknown };
+  };
+  const message =
+    typeof candidate.error?.message === "string"
+      ? candidate.error.message
+      : typeof candidate.message === "string"
+        ? candidate.message
+        : "";
+  const isRateLimited =
+    candidate.statusCode === 429 ||
+    candidate.error?.code === "too_many_requests" ||
+    /quota exceeded|rate limit/i.test(message);
+
+  if (!isRateLimited) return null;
+
+  const retryMatch = message.match(/retry in\s+([\d.]+)s/i);
+  const retryAfterSeconds = retryMatch
+    ? Math.ceil(Number(retryMatch[1]))
+    : undefined;
+
+  return { retryAfterSeconds };
+}
+
 export async function POST(request: Request) {
+  const flowId = crypto.randomUUID();
+  const startedAt = Date.now();
+
   try {
     const body = await request.json();
 
@@ -41,6 +99,12 @@ export async function POST(request: Request) {
           .slice(-10)
       : [];
 
+    console.info(`[chat:${flowId}] received`, {
+      questionLength: question.length,
+      selectedDocumentCount: documentIds.length,
+      historyMessages: history.length,
+    });
+
     if (!question) {
       return NextResponse.json(
         { message: "Question is required" },
@@ -48,54 +112,144 @@ export async function POST(request: Request) {
       );
     }
 
-    let context = "";
+    // Document chat is user-scoped, so authenticate before querying the
+    // database or using the user's Pinecone namespace.
+    const cookieStore = await cookies();
+    const token = cookieStore.get("token")?.value;
 
-    /*
-     * DOCUMENT MODE
-     *
-     * Only search Pinecone when documents are selected.
-     */
-    if (documentIds.length > 0) {
-      /*
-       * Replace this section with your real Pinecone flow:
-       *
-       * const questionEmbedding =
-       *   await createQuestionEmbedding(question);
-       *
-       * const matches = await searchPinecone({
-       *   vector: questionEmbedding,
-       *   documentIds,
-       * });
-       *
-       * context = matches
-       *   .map((match) => match.metadata?.text)
-       *   .filter(Boolean)
-       *   .join("\n\n");
-       */
-
-      context = `
-        Temporary content from the selected documents.
-        Replace this with the chunks returned from Pinecone.
-      `;
+    if (!token) {
+      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
-    /*
-     * GENERAL MODE:
-     * When documentIds is empty, context stays empty and Gemini
-     * answers like a normal conversational assistant.
-     */
-    const answer = await generateAnswer({
-      question,
-      history,
-      context,
+    const { id: userId } = verifyToken(token);
+    const useDocumentContext =
+      documentIds.length > 0 && !isCasualGeneralMessage(question);
+    console.info(`[chat:${flowId}] authenticated`, {
+      userId,
+      mode: useDocumentContext ? "document" : "general",
+      retainedDocumentScopeIgnoredForCasualMessage:
+        documentIds.length > 0 && !useDocumentContext,
+    });
+    const requestedChatId =
+      typeof body.chatId === "string" ? body.chatId : undefined;
+
+    const existingChat = requestedChatId
+      ? await prisma.chat.findFirst({
+          where: { id: requestedChatId, userId },
+          select: { id: true },
+        })
+      : null;
+
+    let answer: string;
+    let sources: Array<{
+      id: string;
+      fileName: string;
+      pageNumber: number;
+      score: number;
+      excerpt: string;
+    }> = [];
+    let mode: "general" | "document" = "general";
+
+    if (useDocumentContext) {
+      const selectedDocuments = await prisma.document.findMany({
+        where: {
+          id: { in: documentIds },
+          userId,
+          status: "READY",
+        },
+        select: { id: true },
+      });
+
+      if (selectedDocuments.length !== documentIds.length) {
+        console.warn(`[chat:${flowId}] unavailable document selection`, {
+          requested: documentIds.length,
+          available: selectedDocuments.length,
+        });
+        return NextResponse.json(
+          {
+            message:
+              "One or more selected documents are unavailable or still processing",
+          },
+          { status: 400 }
+        );
+      }
+
+      console.info(`[chat:${flowId}] document scope verified`, {
+        documentCount: selectedDocuments.length,
+      });
+
+      const result = await askSelectedDocuments({
+        question,
+        documentIds,
+        userId,
+        history,
+        flowId,
+      });
+
+      answer = result.answer ?? "I couldn't generate an answer. Please try again.";
+      sources = result.sources;
+      mode = "document";
+    } else {
+      if (documentIds.length > 0) {
+        console.info(`[chat:${flowId}] casual message bypassed document retrieval`);
+      }
+      console.info(`[chat:${flowId}] starting general answer generation`);
+      answer =
+        (await generateAnswer({ question, history, context: "", flowId })) ??
+        "I couldn't generate an answer. Please try again.";
+    }
+
+    const chat = existingChat
+      ? documentIds.length > 0
+        ? await prisma.chat.update({
+            where: { id: existingChat.id },
+            data: { documentIds },
+            select: { id: true },
+          })
+        : existingChat
+      : await prisma.chat.create({
+          data: {
+            userId,
+            title: question.slice(0, 60),
+            documentIds,
+          },
+          select: { id: true },
+        });
+
+    await prisma.message.createMany({
+      data: [
+        { chatId: chat.id, role: "user", content: question },
+        { chatId: chat.id, role: "assistant", content: answer },
+      ],
     });
 
-    return NextResponse.json({
-      answer,
-      mode: documentIds.length > 0 ? "document" : "general",
+    console.info(`[chat:${flowId}] complete`, {
+      chatId: chat.id,
+      mode,
+      answerLength: answer.length,
+      sourceCount: sources.length,
+      durationMs: Date.now() - startedAt,
     });
+
+    return NextResponse.json({ answer, sources, mode, chatId: chat.id });
   } catch (error) {
-    console.error("Chat API error:", error);
+    console.error(`[chat:${flowId}] failed`, error);
+
+    const rateLimit = getRateLimitDetails(error);
+
+    if (rateLimit) {
+      const retryMessage = rateLimit.retryAfterSeconds
+        ? `The AI request limit has been reached. Please try again in about ${rateLimit.retryAfterSeconds} seconds.`
+        : "The AI request limit has been reached. Please wait a moment and try again.";
+
+      return NextResponse.json(
+        {
+          message: retryMessage,
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+        { status: 429 }
+      );
+    }
 
     return NextResponse.json(
       { message: "Failed to generate answer" },
@@ -103,3 +257,4 @@ export async function POST(request: Request) {
     );
   }
 }
+

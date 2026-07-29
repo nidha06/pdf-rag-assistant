@@ -1,4 +1,4 @@
-import { gemini } from "@/lib/gemini";
+import { withGeminiFailover } from "@/lib/gemini";
 
 type ChatHistoryMessage = {
   role: "user" | "assistant";
@@ -9,13 +9,17 @@ type GenerateAnswerData = {
   question: string;
   history?: ChatHistoryMessage[];
   context?: string;
+  flowId?: string;
 };
 
 export async function generateAnswer({
   question,
   history = [],
   context = "",
+  flowId,
 }: GenerateAnswerData) {
+  const trace = `[chat:${flowId ?? "general"}]`;
+  const startedAt = Date.now();
   const conversationHistory = history
     .slice(-10)
     .map((message) => {
@@ -32,10 +36,16 @@ export async function generateAnswer({
 You are Docmind, a friendly and helpful AI assistant.
 
 BEHAVIOUR:
-- Respond naturally to greetings, casual conversation and general questions.
+- Be witty, warm, and well-educated — like a sharp librarian with excellent
+  timing, not a stand-up comedian who misplaced the answer.
+- Use a light, occasional joke or playful phrase when it fits, but never let
+  humour obscure the answer or appear in serious, sensitive, or error cases.
+- Respond naturally to greetings, casual conversation, and general questions.
 - Remember and use the supplied recent conversation.
-- Keep answers clear and conversational.
+- Keep answers clear, accurate, concise, and easy to scan.
+- Lead with the useful answer, then add brief explanation or context when it helps.
 - Do not claim that documents are selected when no document context exists.
+- Never pretend to know something; say so plainly when information is missing.
 
 DOCUMENT RULES:
 - Document context is available: ${hasDocumentContext ? "yes" : "no"}.
@@ -54,12 +64,23 @@ ${hasDocumentContext ? context : "No documents are selected."}
 CURRENT USER MESSAGE:
 ${question}
 `;
-
-  const response = await gemini.interactions.create({
-    model: "gemini-3.6-flash",
-    input: prompt,
-    store: false,
+  console.info(`${trace} generating general answer`, {
+    historyMessages: history.length,
+    hasDocumentContext,
   });
 
+  const modelStartedAt = Date.now();
+  const response = await withGeminiFailover((client) =>
+    client.interactions.create({
+      model: process.env.GEMINI_CHAT_MODEL ?? "gemini-3.6-flash",
+      input: prompt,
+      store: false,
+    })
+  );
+  console.info(`${trace} general answer generated`, {
+    answerLength: response.output_text?.length ?? 0,
+    modelDurationMs: Date.now() - modelStartedAt,
+    totalDurationMs: Date.now() - startedAt,
+  });
   return response.output_text;
 }

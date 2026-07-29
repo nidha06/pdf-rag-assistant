@@ -81,6 +81,7 @@ export const UserScalarFieldEnum = {
   password: 'password',
   provider: 'provider',
   role: 'role',
+  avatarSeed: 'avatarSeed',
   createdAt: 'createdAt'
 } as const
 
@@ -103,6 +104,7 @@ export type DocumentScalarFieldEnum = (typeof DocumentScalarFieldEnum)[keyof typ
 export const ChatScalarFieldEnum = {
   id: 'id',
   title: 'title',
+  documentIds: 'documentIds',
   createAt: 'createAt',
   userId: 'userId'
 } as const

@@ -1,18 +1,30 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import axios from "axios";
+import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import { Avatar, Style } from "@dicebear/core";
+import lorelei from "@dicebear/styles/lorelei.json";
 import {
   useDocmindStore,
   FileIcon,
-  conversations,
 } from "../store/chatStore";
-import { useSendMessageMutation } from "../hooks/useChatMutations";
+
 import {
   useDocuments,
   useUploadFilesMutation,
+  useDeleteDocumentMutation,
 } from "../hooks/useKnowledgeBaseMutations";
 import { useCurrentUser } from "../hooks/useUserMutations";
+import {
+  useSendMessageMutation,
+  useChatHistory,
+  type AnswerSource,
+  type ChatHistoryMessage,
+} from "../hooks/useChatMutations";
+
 
 const doodleSvgTile = `
 <svg xmlns='http://www.w3.org/2000/svg' width='260' height='260' viewBox='0 0 260 260'>
@@ -58,6 +70,7 @@ const doodleSvgTile = `
 </svg>`;
 
 const doodleBackground = `url("data:image/svg+xml,${encodeURIComponent(doodleSvgTile)}")`;
+const loreleiStyle = new Style(lorelei);
 
 /** How many documents to show in the sidebar before collapsing to "View all files". */
 const SIDEBAR_DOC_LIMIT = 5;
@@ -69,6 +82,10 @@ function getInitials(name?: string | null) {
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function createUserAvatar(seed: string) {
+  return new Avatar(loreleiStyle, { seed, size: 160 }).toDataUri();
 }
 
 /** Picks a sidebar file-icon color based on the document's extension. */
@@ -87,44 +104,86 @@ function formatBytes(bytes?: number | null) {
 
 export default function DocmindPage() {
   const messages = useDocmindStore((s) => s.messages);
-  const attachments = useDocmindStore((s) => s.attachments);
   const input = useDocmindStore((s) => s.input);
   const isTyping = useDocmindStore((s) => s.isTyping);
   const dragOver = useDocmindStore((s) => s.dragOver);
   //  const { data: document, isLoading, error } = useDocuments();
-
   const setInput = useDocmindStore((s) => s.setInput);
   const setDragOver = useDocmindStore((s) => s.setDragOver);
   const setIsTyping = useDocmindStore((s) => s.setIsTyping);
+  const setMessages = useDocmindStore((s) => s.setMessages);
   const submitUserMessage = useDocmindStore((s) => s.submitUserMessage);
   const appendAiMessage = useDocmindStore((s) => s.appendAiMessage);
-  const addAttachment = useDocmindStore((s) => s.addAttachment);
-  const removeAttachment = useDocmindStore((s) => s.removeAttachment);
 
   const queryClient = useQueryClient();
   const sendMessageMutation = useSendMessageMutation();
   const uploadFilesMutation = useUploadFilesMutation();
+  const deleteDocumentMutation = useDeleteDocumentMutation();
   const isSending = sendMessageMutation.isPending;
 
   // NEW: which knowledge-base documents (from the sidebar) are selected to
   // scope the next question, and whether the "view all files" modal is open.
   // Purely additive local UI state — doesn't touch the Zustand store.
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [activeDocumentIds, setActiveDocumentIds] = useState<string[]>([]);
   const [showAllDocsModal, setShowAllDocsModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [chatId, setChatId] = useState<string>();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [historyActionChatId, setHistoryActionChatId] = useState<string | null>(null);
+  const [historyModal, setHistoryModal] = useState<{
+    kind: "rename" | "delete";
+    chat: { id: string; title: string };
+  } | null>(null);
+  const [conversationTitle, setConversationTitle] = useState("");
+  const [conversationActionError, setConversationActionError] = useState("");
+  const [isSavingConversationAction, setIsSavingConversationAction] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<any>(null);
+  const [referenceSources, setReferenceSources] = useState<AnswerSource[] | null>(null);
+  const [previewDocument, setPreviewDocument] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
 
-  const {
+const {
   data: documentsData,
   isLoading,
   error,
 } = useDocuments();
+  const { data: chatHistory = [] } = useChatHistory();
 
-const documents = Array.isArray(documentsData)
+const allDocuments = Array.isArray(documentsData)
   ? documentsData
   : documentsData?.documents ?? [];
 
-  const visibleSidebarDocs = documents.slice(0, SIDEBAR_DOC_LIMIT);
-  const hasMoreDocs = documents.length > SIDEBAR_DOC_LIMIT;
+// Only indexed documents can be searched. Failed or still-processing uploads
+// must not be selectable for document chat.
+const documents = allDocuments.filter(
+  (document: any) => document.status === "READY"
+);
+
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredDocuments = normalizedSearch
+    ? documents.filter((document: any) =>
+        document.fileName.toLowerCase().includes(normalizedSearch)
+      )
+    : documents;
+  const filteredChatHistory = normalizedSearch
+    ? chatHistory.filter((chat) =>
+        chat.title.toLowerCase().includes(normalizedSearch)
+      )
+    : chatHistory;
+  const visibleSidebarDocs = filteredDocuments.slice(0, SIDEBAR_DOC_LIMIT);
+  const hasMoreDocs = filteredDocuments.length > SIDEBAR_DOC_LIMIT;
   const selectedDocs = documents.filter((d: any) => selectedDocIds.includes(d.id));
+  const documentContextCount =
+    selectedDocIds.length > 0 ? selectedDocIds.length : activeDocumentIds.length;
 
   function toggleDocSelection(id: string) {
     setSelectedDocIds((prev) =>
@@ -132,8 +191,78 @@ const documents = Array.isArray(documentsData)
     );
   }
 
+  function startNewChat() {
+    setChatId(undefined);
+    setMessages([]);
+    setSelectedDocIds([]);
+    setActiveDocumentIds([]);
+    setInput("");
+    setHistoryActionChatId(null);
+    if (window.matchMedia("(max-width: 980px)").matches) {
+      setIsSidebarOpen(false);
+    }
+  }
+
+  function confirmDocumentDelete() {
+    if (!documentToDelete || deleteDocumentMutation.isPending) return;
+
+    deleteDocumentMutation.mutate(documentToDelete.id, {
+      onSuccess: () => {
+        setSelectedDocIds((ids) =>
+          ids.filter((id) => id !== documentToDelete.id)
+        );
+        setDocumentToDelete(null);
+        queryClient.invalidateQueries({ queryKey: ["documents"] });
+      },
+      onError: (error) => {
+        appendAiMessage(
+          axios.isAxiosError(error) &&
+            typeof error.response?.data?.message === "string"
+            ? error.response.data.message
+            : "Couldn't delete that document. Please try again."
+        );
+      },
+    });
+  }
+
   // Real current user, replacing the hardcoded "Maren Ruiz" profile card.
   const { data: user } = useCurrentUser();
+  const userAvatar = useMemo(
+    () => createUserAvatar(user?.avatarSeed ?? user?.id ?? user?.email ?? user?.name ?? "docmind-guest"),
+    [user?.avatarSeed, user?.id, user?.email, user?.name]
+  );
+
+  function openProfileModal() {
+    setDisplayName(user?.name ?? "");
+    setShowProfileMenu(false);
+    setShowProfileModal(true);
+  }
+
+  async function saveProfile() {
+    if (!displayName.trim() || isSavingProfile) return;
+
+    try {
+      setIsSavingProfile(true);
+      await axios.patch("/api/auth/me", { name: displayName });
+      queryClient.invalidateQueries({ queryKey: ["current-user"] });
+      setShowProfileModal(false);
+    } catch (error) {
+      appendAiMessage(
+        axios.isAxiosError(error) &&
+          typeof error.response?.data?.message === "string"
+          ? error.response.data.message
+          : "Couldn't update your profile. Please try again."
+      );
+    } finally {
+      setIsSavingProfile(false);
+    }
+  }
+
+  async function logout() {
+    await axios.post("/api/auth/logout");
+    queryClient.clear();
+    router.replace("/auth/login");
+  }
    
 //   if (isLoading) {
 //   return <div>Loading...</div>;
@@ -143,33 +272,58 @@ const documents = Array.isArray(documentsData)
 
     if (!question || isSending) return;
 
-    // Send a small amount of recent history so Gemini can understand
-    // follow-up questions in both general-chat and document-chat modes.
-    const history = messages.slice(-10).map((message) => ({
-      role: message.role === "ai" ? "assistant" : "user",
-      content: message.content,
+    // Selection applies to this one question only. Keep the IDs for the API
+    // request, but render the selected files with the outgoing user message.
+    const documentIds =
+      selectedDocIds.length > 0 ? [...selectedDocIds] : activeDocumentIds;
+    const attachedDocuments = selectedDocs.map((document: any) => ({
+      id: document.id,
+      name: document.fileName,
+      onOpen: () =>
+        setPreviewDocument({ id: document.id, name: document.fileName }),
     }));
 
+    // Send a small amount of recent history so Gemini can understand
+    // follow-up questions in both general-chat and document-chat modes.
+    const history: ChatHistoryMessage[] = messages
+      .slice(-10)
+      .filter((message): message is typeof message & { text: string } =>
+        typeof message.text === "string"
+      )
+      .map((message) => ({
+        role: message.role === "ai" ? "assistant" : "user",
+        content: message.text,
+      }));
+
     // Adds the user's message to Zustand and clears the composer.
-    submitUserMessage();
+    submitUserMessage(attachedDocuments);
+    setSelectedDocIds([]);
+    setActiveDocumentIds(documentIds);
 
     setIsTyping(true);
     sendMessageMutation.mutate(
       {
         question,
-        documentIds: selectedDocIds,
+        documentIds,
         history,
+        chatId,
       },
       {
         onSuccess: (result) => {
-          appendAiMessage(result.answer);
+          appendAiMessage(result.answer, result.sources);
+          setChatId(result.chatId);
+          queryClient.invalidateQueries({ queryKey: ["chat-history"] });
         },
-        onError: () => {
+        onError: (error) => {
+          const message =
+            axios.isAxiosError(error) &&
+            typeof error.response?.data?.message === "string"
+              ? error.response.data.message
+              : "Sorry, something went wrong reaching the model. Please try again.";
+
           appendAiMessage(
-            "Sorry, something went wrong reaching the model. Please try again."
+            message
           );
-          // Put the failed question back so the user can retry it.
-          setInput(question);
         },
         onSettled: () => {
           setIsTyping(false);
@@ -180,6 +334,15 @@ const documents = Array.isArray(documentsData)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const desktopMedia = window.matchMedia("(min-width: 981px)");
+    const syncSidebarForViewport = () => setIsSidebarOpen(desktopMedia.matches);
+
+    syncSidebarForViewport();
+    desktopMedia.addEventListener("change", syncSidebarForViewport);
+    return () => desktopMedia.removeEventListener("change", syncSidebarForViewport);
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -209,22 +372,38 @@ const documents = Array.isArray(documentsData)
     }
   }
 
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    setDragOver(false);
-    const files = Array.from(e.dataTransfer.files || []);
+  function uploadPdfFiles(files: File[]) {
     if (!files.length) return;
 
-    // Optimistic preview chips in the composer while the upload is in flight.
-    files.forEach((f) => {
-      addAttachment(f.name, formatBytes(f.size));
-    });
+    const pdfFiles = files.filter(
+      (file) =>
+        file.type === "application/pdf" ||
+        file.name.toLowerCase().endsWith(".pdf")
+    );
 
-    // Real upload to the backend, then refresh the sidebar document list.
+    if (pdfFiles.length !== files.length) {
+      appendAiMessage("Only PDF files can be uploaded.");
+    }
+
+    if (!pdfFiles.length) return;
+
+    // Upload first; successful uploads are selected for the next message.
     uploadFilesMutation.mutate(
-      { files },
+      { files: pdfFiles },
       {
-        onSuccess: () => {
+        onSuccess: (uploadedDocuments) => {
+          const uploadedIds = Array.isArray(uploadedDocuments)
+            ? uploadedDocuments
+                .map((document) => document?.id)
+                .filter((id): id is string => typeof id === "string")
+            : [];
+
+          if (uploadedIds.length > 0) {
+            setSelectedDocIds((currentIds) =>
+              Array.from(new Set([...currentIds, ...uploadedIds]))
+            );
+          }
+
           queryClient.invalidateQueries({ queryKey: ["documents"] });
         },
         onError: () => {
@@ -236,36 +415,174 @@ const documents = Array.isArray(documentsData)
     );
   }
 
+  async function openChat(selectedChatId: string) {
+    try {
+      const response = await axios.get(`/api/chats/${selectedChatId}`);
+      const savedMessages = response.data.messages.map((message: {
+        id: string;
+        role: string;
+        content: string;
+        createdAt: string;
+      }) => ({
+        id: message.id,
+        role: message.role === "assistant" ? "ai" : "user" as const,
+        text: message.content,
+        content: <p>{message.content}</p>,
+        time: new Date(message.createdAt).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      }));
+
+      setMessages(savedMessages);
+      setChatId(selectedChatId);
+      setSelectedDocIds([]);
+      setActiveDocumentIds(
+        Array.isArray(response.data.documentIds) ? response.data.documentIds : []
+      );
+      setHistoryActionChatId(null);
+      if (window.matchMedia("(max-width: 980px)").matches) {
+        setIsSidebarOpen(false);
+      }
+    } catch {
+      appendAiMessage("I couldn't load that conversation. Please try again.");
+    }
+  }
+
+  function openHistoryModal(
+    kind: "rename" | "delete",
+    chat: { id: string; title: string }
+  ) {
+    setHistoryActionChatId(null);
+    setConversationTitle(chat.title);
+    setConversationActionError("");
+    setHistoryModal({ kind, chat });
+  }
+
+  function closeHistoryModal() {
+    if (isSavingConversationAction) return;
+    setHistoryModal(null);
+    setConversationActionError("");
+  }
+
+  async function saveConversationName(event: React.FormEvent) {
+    event.preventDefault();
+    if (!historyModal || isSavingConversationAction) return;
+
+    const title = conversationTitle.trim();
+    if (!title) {
+      setConversationActionError("Give it a name first — even chats need an identity.");
+      return;
+    }
+
+    try {
+      setIsSavingConversationAction(true);
+      await axios.patch(`/api/chats/${historyModal.chat.id}`, { title });
+      queryClient.invalidateQueries({ queryKey: ["chat-history"] });
+      setHistoryModal(null);
+    } catch (error) {
+      setConversationActionError(
+        axios.isAxiosError(error) &&
+          typeof error.response?.data?.message === "string"
+          ? error.response.data.message
+          : "That name slipped on a banana peel. Try again."
+      );
+    } finally {
+      setIsSavingConversationAction(false);
+    }
+  }
+
+  async function confirmChatDelete() {
+    if (!historyModal || isSavingConversationAction) return;
+
+    try {
+      setIsSavingConversationAction(true);
+      await axios.delete(`/api/chats/${historyModal.chat.id}`);
+      if (chatId === historyModal.chat.id) startNewChat();
+      queryClient.invalidateQueries({ queryKey: ["chat-history"] });
+      setHistoryModal(null);
+    } catch (error) {
+      setConversationActionError(
+        axios.isAxiosError(error) &&
+          typeof error.response?.data?.message === "string"
+          ? error.response.data.message
+          : "The chat escaped the shredder. Please try again."
+      );
+    } finally {
+      setIsSavingConversationAction(false);
+    }
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    uploadPdfFiles(Array.from(e.dataTransfer.files || []));
+  }
+
  function renderSelectableDocRow(document: any) {
   const isSelected = selectedDocIds.includes(document.id);
   return (
     <div
-      className={`doc-row ${isSelected ? "selected" : ""}`}
+      className={`knowledge-doc-item ${isSelected ? "is-selected" : ""}`}
       key={document.id}
       onClick={() => toggleDocSelection(document.id)}
-      role="checkbox"
-      aria-checked={isSelected}
+      role="button"
       tabIndex={0}
+      aria-pressed={isSelected}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           toggleDocSelection(document.id);
         }
       }}
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "9px 10px",
+        border: "none",
+        background: isSelected ? "rgba(227, 242, 74, 0.1)" : "transparent",
+        color: "inherit",
+        textAlign: "left",
+        cursor: "pointer",
+      }}
     >
-      <span className={`doc-file-ico ${getFileKind(document.fileName)} ${isSelected ? "is-checked" : ""}`}>
-        {isSelected ? (
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 6 9 17l-5-5" />
-          </svg>
-        ) : (
-          <FileIcon />
-        )}
+      <span
+        className="knowledge-doc-icon"
+        aria-hidden="true"
+        style={{ width: 12, height: 12, minWidth: 12, display: "grid", placeItems: "center", color: isSelected ? "var(--lime)" : "var(--text-muted)" }}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ width: 12, height: 12, display: "block" }}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <path d="M14 2v6h6" />
+        </svg>
       </span>
 
-      <div className="doc-row-text">
-        <div className="doc-row-title">{document.fileName}</div>
-      </div>
+      <span className="knowledge-doc-copy" style={{ minWidth: 0, flex: 1, display: "block" }}>
+        <span className="knowledge-doc-name" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, fontWeight: 500, color: isSelected ? "var(--lime)" : "var(--text-primary)" }}>{document.fileName}</span>
+        <span className="knowledge-doc-meta" style={{ display: "block", marginTop: 2, fontSize: 10.5, color: "var(--text-muted)" }}>
+          Ready{document.fileSize ? ` · ${formatBytes(document.fileSize)}` : ""}
+        </span>
+      </span>
+      <button
+        type="button"
+        aria-label={`Delete ${document.fileName}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          setDocumentToDelete(document);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+            setDocumentToDelete(document);
+          }
+        }}
+        style={{ border: 0, background: "transparent", color: "var(--text-muted)", fontSize: 17, lineHeight: 1, padding: "2px 4px", cursor: "pointer" }}
+      >
+        ×
+      </button>
     </div>
   );
 }
@@ -292,16 +609,28 @@ const documents = Array.isArray(documentsData)
             <circle cx="11" cy="11" r="7" />
             <path d="m21 21-4.3-4.3" />
           </svg>
-          <input type="text" placeholder="Search conversations and documents" />
+          <input
+            type="search"
+            aria-label="Search documents and conversations"
+            placeholder="Find that PDF before it plays hide-and-seek…"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+          />
         </div>
 
         <div className="header-actions">
-          <button className="icon-btn" aria-label="Notifications">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+          <button
+            type="button"
+            className="icon-btn sidebar-toggle"
+            aria-label={isSidebarOpen ? "Hide sidebar" : "Show sidebar"}
+            aria-expanded={isSidebarOpen}
+            onClick={() => setIsSidebarOpen((isOpen) => !isOpen)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M4 7h16" />
+              <path d="M4 12h16" />
+              <path d="M4 17h16" />
             </svg>
-            <span className="notif-dot" />
           </button>
           <button className="icon-btn" aria-label="Settings">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -313,7 +642,15 @@ const documents = Array.isArray(documentsData)
       </header>
 
       {/* ===== Main ===== */}
-      <div className="main">
+      <div className={`main ${isSidebarOpen ? "sidebar-is-open" : "sidebar-is-hidden"}`}>
+        {isSidebarOpen && (
+          <button
+            type="button"
+            className="sidebar-scrim"
+            aria-label="Close sidebar"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
         {/* Chat column */}
         <div className="chat-col">
           <div
@@ -324,13 +661,33 @@ const documents = Array.isArray(documentsData)
             <div className="chat-inner">
               <div className="day-divider">Today</div>
 
+              {messages.length === 0 && !isTyping && (
+                <div className="welcome-title pixel">
+                  Welcome, {user?.name ?? "friend"} — let&apos;s politely
+                  interrogate some PDFs.
+                </div>
+              )}
+
               {messages.map((m) => (
                 <div className={`msg ${m.role}`} key={m.id}>
                   <div className={`msg-avatar ${m.role === "ai" ? "pixel" : ""}`}>
-                    {m.role === "ai" ? "AI" : getInitials(user?.name)}
+                    {m.role === "ai" ? "AI" : <img src={userAvatar} alt="" />}
                   </div>
                   <div className="bubble-wrap">
-                    <div className="bubble">{m.content}</div>
+                    <div className={`bubble ${m.role === "ai" ? "markdown-answer" : ""}`}>
+                      {m.role === "ai" && m.text ? (
+                        <ReactMarkdown>{m.text}</ReactMarkdown>
+                      ) : (
+                        m.content
+                      )}
+                    </div>
+                    {m.role === "ai" && m.sources && m.sources.length > 0 && (
+                      <div className="answer-sources" aria-label="Answer references">
+                        <button type="button" onClick={() => setReferenceSources(m.sources ?? [])}>
+                          View PDF source{m.sources.length === 1 ? "" : "s"} ({m.sources.length})
+                        </button>
+                      </div>
+                    )}
                     <span className="msg-time">{m.time}</span>
                   </div>
                 </div>
@@ -388,33 +745,6 @@ const documents = Array.isArray(documentsData)
                 </div>
               )}
 
-              {attachments.length > 0 && (
-                <div className="attachments-preview">
-                  {attachments.map((a: any) => (
-                    <div className="attachment-chip" key={a.id}>
-                      <span className="file-ico">
-                        <FileIcon />
-                      </span>
-                      <div className="file-meta">
-                        <div className="file-name">{a.name}</div>
-                        <div className="file-size">{a.size}</div>
-                      </div>
-                      <button
-                        type="button"
-                        className="remove-btn"
-                        aria-label={`Remove ${a.name}`}
-                        onClick={() => removeAttachment(a.id)}
-                      >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M18 6 6 18" />
-                          <path d="m6 6 12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
               <div
                 className={`composer ${dragOver ? "drag-over" : ""}`}
                 onDragOver={(e) => {
@@ -428,7 +758,7 @@ const documents = Array.isArray(documentsData)
                   ref={textareaRef}
                   rows={1}
                   placeholder={
-                    selectedDocIds.length > 0
+                    documentContextCount > 0
                       ? "Ask a question about the selected documents"
                       : "Message Docmind AI"
                   }
@@ -457,8 +787,20 @@ const documents = Array.isArray(documentsData)
 
               <div className="composer-hint">
                 <span className="chat-mode">
-                  {selectedDocIds.length > 0
-                    ? `Document chat · ${selectedDocIds.length} selected`
+                  {documentContextCount > 0
+                    ? <>
+                        Document chat · {documentContextCount} active
+                        <button
+                          type="button"
+                          className="clear-document-context"
+                          onClick={() => {
+                            setSelectedDocIds([]);
+                            setActiveDocumentIds([]);
+                          }}
+                        >
+                          Ask generally
+                        </button>
+                      </>
                     : "General chat · select documents to ask about them"}
                 </span>
                 <span>
@@ -470,11 +812,25 @@ const documents = Array.isArray(documentsData)
         </div>
 
         {/* Sidebar */}
-        <aside className="sidebar">
+        <aside className="sidebar" aria-hidden={!isSidebarOpen}>
+          <button
+            type="button"
+            className="sidebar-close"
+            aria-label="Close sidebar"
+            onClick={() => setIsSidebarOpen(false)}
+          >
+            ×
+          </button>
           <div className="profile-block">
-            <div className="profile-card">
+            <button
+              type="button"
+              className="profile-card"
+              onClick={() => setShowProfileMenu((isOpen) => !isOpen)}
+              aria-expanded={showProfileMenu}
+              aria-haspopup="menu"
+            >
               <div className="avatar">
-                {getInitials(user?.name)}
+                <img src={userAvatar} alt="" />
                 <span className="online-dot" />
               </div>
               <div className="profile-meta">
@@ -483,115 +839,361 @@ const documents = Array.isArray(documentsData)
                 </div>
                 <div className="profile-email">
                   {user?.email}
-                 
+                  
                 </div>
               </div>
-            </div>
+            </button>
+            {showProfileMenu && (
+              <div className="profile-menu" role="menu">
+                <button type="button" role="menuitem" onClick={openProfileModal}>
+                  Profile
+                </button>
+                <button type="button" role="menuitem" className="logout-action" onClick={logout}>
+                  Logout
+                </button>
+              </div>
+            )}
             
           </div>
-<div className="sidebar-section-label">Knowledge Base</div>
+          <button type="button" className="new-chat-btn" onClick={startNewChat}>
+            <span>+</span>
+            Fresh start
+          </button>
+<div className="knowledge-base-heading">
+  <div className="sidebar-section-label">Knowledge Base</div>
+  <input
+    ref={uploadInputRef}
+    type="file"
+    accept="application/pdf,.pdf"
+    multiple
+    hidden
+    onChange={(e) => {
+      uploadPdfFiles(Array.from(e.target.files || []));
+      e.target.value = "";
+    }}
+  />
+  <button
+    type="button"
+    className="knowledge-upload-btn"
+    aria-label="Upload PDF files"
+    title="Upload PDF files"
+    disabled={uploadFilesMutation.isPending}
+    onClick={() => uploadInputRef.current?.click()}
+  >
+    {uploadFilesMutation.isPending ? "…" : "+"}
+  </button>
+</div>
 
-<div className="doc-list-container">
+<div className="knowledge-doc-list">
   {isLoading && (
-    <div className="doc-list-loading">
+    <div className="knowledge-doc-loading">
       <span className="spinner" />
       Updating library...
     </div>
   )}
 
-  {!isLoading && documents?.length === 0 && (
-    <div className="doc-list-empty">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <polyline points="14 2 14 8 20 8" />
-        <line x1="9" y1="15" x2="15" y2="15" />
-      </svg>
-      <p>No documents found</p>
+  {!isLoading && (
+    <div className="knowledge-doc-items">
+      {filteredDocuments.length === 0 ? (
+        <div className="knowledge-doc-empty">
+          {normalizedSearch ? "No PDF matches that clue." : "No ready documents yet"}
+        </div>
+      ) : (
+        visibleSidebarDocs.map((document: any) => renderSelectableDocRow(document))
+      )}
     </div>
   )}
 
-  <div className="doc-rows-wrapper">
-    {visibleSidebarDocs.map((document: any) => renderSelectableDocRow(document))}
-  </div>
-
   {hasMoreDocs && (
     <button
-      className="view-all-action"
+      className="knowledge-view-all"
       onClick={() => setShowAllDocsModal(true)}
     >
-      <div className="stacked-icons">
-        <span />
-        <span />
-        <span />
-      </div>
-      <div className="view-all-text">
-        <span className="title">View all {documents.length} files</span>
-        <span className="sub">Manage your knowledge base</span>
-      </div>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-        <path d="m9 18 6-6-6-6" />
-      </svg>
+      View all {filteredDocuments.length} documents
     </button>
   )}
 </div>
 
           <div>
-            <div className="sidebar-section-label">Recent conversations</div>
+            <div className="chat-history-heading">
+              <div className="sidebar-section-label">Recent conversations</div>
+            </div>
             <div className="sb-card">
-              {conversations.map((c, i) => (
-                <div className="sb-row" key={i}>
-                  <span className={`convo-dot ${c.active ? "active" : ""}`} />
-                  <div className="sb-row-text">
-                    <div className="sb-row-title">{c.name}</div>
-                    <div className="sb-row-sub">{c.meta}</div>
+              {filteredChatHistory.length === 0 ? (
+                <p className="chat-history-empty">
+                  {normalizedSearch ? "No chats match that clue." : "No conversations yet"}
+                </p>
+              ) : (
+                filteredChatHistory.map((chat) => (
+                  <div
+                    className="sb-row history-row"
+                    key={chat.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openChat(chat.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openChat(chat.id);
+                      }
+                    }}
+                  >
+                    <span className={`convo-dot ${chat.id === chatId ? "active" : ""}`} />
+                    <div className="sb-row-text">
+                      <div className="sb-row-title">{chat.title}</div>
+                      <div className="sb-row-sub">
+                        {new Date(chat.createAt).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="history-more-button"
+                      aria-label={`Conversation options for ${chat.title}`}
+                      aria-expanded={historyActionChatId === chat.id}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setHistoryActionChatId((current) =>
+                          current === chat.id ? null : chat.id
+                        );
+                      }}
+                    >
+                      ···
+                    </button>
+                    {historyActionChatId === chat.id && (
+                      <div
+                        className="history-action-menu"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <button type="button" onClick={() => openHistoryModal("rename", chat)}>
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          className="history-delete-button"
+                          onClick={() => openHistoryModal("delete", chat)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="sidebar-section-label">Model</div>
-            <div className="model-card">
-              <div className="model-info">
-                <div className="model-badge">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <rect x="4" y="4" width="6" height="6" />
-                    <rect x="14" y="4" width="6" height="6" opacity="0.5" />
-                    <rect x="4" y="14" width="6" height="6" opacity="0.5" />
-                    <rect x="14" y="14" width="6" height="6" />
-                  </svg>
-                </div>
-                <div>
-                  <div className="model-name">Precise</div>
-                  <div className="model-sub">Best for long documents</div>
-                </div>
-              </div>
-              <button className="model-select-btn">
-                Change
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <div className="sidebar-section-label">Storage</div>
-            <div className="storage-card">
-              <div className="storage-top">
-                <span className="storage-label">3.8 GB used</span>
-                <span className="storage-value">of 10 GB</span>
-              </div>
-              <div className="storage-track">
-                <div className="storage-fill" />
-              </div>
+                ))
+              )}
             </div>
           </div>
         </aside>
       </div>
 
+      {referenceSources && (
+        <div className="reference-modal-backdrop" onClick={() => setReferenceSources(null)}>
+          <div
+            className="reference-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reference-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="reference-modal-header">
+              <div>
+                <p>PDF RECEIPT</p>
+                <h2 id="reference-modal-title">Source passages from the PDF</h2>
+              </div>
+              <button type="button" aria-label="Close reference" onClick={() => setReferenceSources(null)}>×</button>
+            </div>
+            <p className="reference-intro">Here are the original PDF passages Docmind used — no smoke, just receipts.</p>
+            <div className="reference-sections">
+              {referenceSources.map((source) => (
+                <section className="reference-section" key={source.id}>
+                  <div className="reference-meta">
+                    <span>{source.fileName}</span>
+                    <span>Page {source.pageNumber || "unknown"}</span>
+                    <span>{Math.round(source.score * 100)}% match</span>
+                  </div>
+                  <blockquote>{source.excerpt}</blockquote>
+                </section>
+              ))}
+            </div>
+            <button type="button" className="reference-done" onClick={() => setReferenceSources(null)}>
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
+
+      {previewDocument && (
+        <div
+          className="pdf-preview-backdrop"
+          onClick={() => setPreviewDocument(null)}
+        >
+          <section
+            className="pdf-preview-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pdf-preview-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="pdf-preview-header">
+              <div>
+                <p>PDF PREVIEW</p>
+                <h2 id="pdf-preview-title">{previewDocument.name}</h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Close PDF preview"
+                onClick={() => setPreviewDocument(null)}
+              >
+                ×
+              </button>
+            </header>
+            <iframe
+              className="pdf-preview-frame"
+              src={`/api/documents/${previewDocument.id}/view`}
+              title={`Preview of ${previewDocument.name}`}
+            />
+          </section>
+        </div>
+      )}
+
+      {historyModal && (
+        <div className="conversation-modal-backdrop" onClick={closeHistoryModal}>
+          <div
+            className="conversation-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="conversation-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="conversation-modal-badge">
+              {historyModal.kind === "rename" ? "✎" : "✦"}
+            </div>
+            {historyModal.kind === "rename" ? (
+              <form onSubmit={saveConversationName}>
+                <h2 id="conversation-modal-title">Give this chat a glow-up</h2>
+                <p>A better title makes finding this brainy little detour easier.</p>
+                <label className="conversation-name-label" htmlFor="conversation-name">
+                  Conversation name
+                </label>
+                <input
+                  id="conversation-name"
+                  value={conversationTitle}
+                  maxLength={100}
+                  autoFocus
+                  onFocus={(event) => event.currentTarget.select()}
+                  onChange={(event) => setConversationTitle(event.target.value)}
+                />
+                {conversationActionError && (
+                  <p className="conversation-action-error">{conversationActionError}</p>
+                )}
+                <div className="conversation-modal-actions">
+                  <button type="button" onClick={closeHistoryModal}>Never mind</button>
+                  <button type="submit" className="conversation-primary-button" disabled={isSavingConversationAction}>
+                    {isSavingConversationAction ? "Saving…" : "Save name"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <>
+                <h2 id="conversation-modal-title">Send this chat to the void?</h2>
+                <p>
+                  <strong>{historyModal.chat.title}</strong> and its messages will
+                  vanish. Poof. No take-backs.
+                </p>
+                {conversationActionError && (
+                  <p className="conversation-action-error">{conversationActionError}</p>
+                )}
+                <div className="conversation-modal-actions">
+                  <button type="button" onClick={closeHistoryModal}>Keep it</button>
+                  <button
+                    type="button"
+                    className="conversation-primary-button"
+                    disabled={isSavingConversationAction}
+                    onClick={confirmChatDelete}
+                  >
+                    {isSavingConversationAction ? "Yeeting…" : "Yes, yeet it"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ===== "View all files" modal ===== */}
+      {documentToDelete && (
+        <div className="delete-modal-backdrop" onClick={() => setDocumentToDelete(null)}>
+          <div
+            className="delete-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-document-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="delete-modal-icon">!</div>
+            <h2 id="delete-document-title">Send this PDF to the void?</h2>
+            <p>
+              <strong>{documentToDelete.fileName}</strong> will be permanently
+              deleted—chunks, vectors, storage file, the whole paper trail.
+            </p>
+            <div className="delete-modal-actions">
+              <button type="button" onClick={() => setDocumentToDelete(null)}>
+                Keep it
+              </button>
+              <button
+                type="button"
+                className="delete-confirm-btn"
+                disabled={deleteDocumentMutation.isPending}
+                onClick={confirmDocumentDelete}
+              >
+                {deleteDocumentMutation.isPending ? "Deleting…" : "Yes, yeet it"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showProfileModal && (
+        <div className="profile-modal-backdrop" onClick={() => setShowProfileModal(false)}>
+          <div
+            className="profile-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-profile-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="profile-modal-header">
+              <div>
+                <p className="profile-kicker">IDENTITY FILE</p>
+                <h2 id="edit-profile-title">Tune up your profile</h2>
+              </div>
+              <button type="button" aria-label="Close profile editor" onClick={() => setShowProfileModal(false)}>×</button>
+            </div>
+            <div className="profile-avatar-large">
+              <img src={userAvatar} alt="Your generated DiceBear avatar" />
+            </div>
+            <label className="profile-field">
+              <span>Display name</span>
+              <input
+                value={displayName}
+                maxLength={80}
+                autoFocus
+                onChange={(e) => setDisplayName(e.target.value)}
+              />
+            </label>
+            <label className="profile-field">
+              <span>Email</span>
+              <input value={user?.email ?? ""} readOnly />
+            </label>
+            <p className="profile-help">Your PDFs will know who&apos;s in charge. Fancy.</p>
+            <div className="profile-modal-actions">
+              <button type="button" className="profile-cancel" onClick={() => setShowProfileModal(false)}>Cancel</button>
+              <button type="button" className="profile-save" disabled={!displayName.trim() || isSavingProfile} onClick={saveProfile}>
+                {isSavingProfile ? "Saving…" : "Lock it in"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAllDocsModal && (
         <div
           className="modal-backdrop"
@@ -620,10 +1222,12 @@ const documents = Array.isArray(documentsData)
             </div>
 
             <div className="modal-body">
-              {documents.length === 0 ? (
-                <p className="modal-empty">No documents uploaded</p>
+              {filteredDocuments.length === 0 ? (
+                <p className="modal-empty">
+                  {normalizedSearch ? "No PDF matches that clue." : "No documents uploaded"}
+                </p>
               ) : (
-                documents.map((document: any) => renderSelectableDocRow(document))
+                filteredDocuments.map((document: any) => renderSelectableDocRow(document))
               )}
             </div>
 
@@ -782,6 +1386,136 @@ const documents = Array.isArray(documentsData)
           width: 16px;
           height: 16px;
         }
+
+        /* Knowledge base: self-contained document list styling. */
+        .knowledge-doc-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .knowledge-doc-items {
+          border: 1px solid var(--border);
+          border-radius: var(--radius);
+          background: var(--surface);
+        }
+        .knowledge-doc-item {
+          appearance: none;
+          width: 100%;
+          min-width: 0;
+          display: grid;
+          grid-template-columns: 8px minmax(0, 1fr);
+          align-items: start;
+          column-gap: 8px;
+          padding: 10px 11px;
+          border: 0;
+          border-radius: 0;
+          background: transparent;
+          color: inherit;
+          text-align: left;
+          cursor: pointer;
+          transition: background 150ms ease;
+        }
+        .knowledge-doc-item + .knowledge-doc-item {
+          border-top: 1px solid var(--border);
+        }
+        .knowledge-doc-item:hover,
+        .knowledge-doc-item:focus-visible {
+          background: var(--surface-2);
+          outline: none;
+        }
+        .knowledge-doc-item.is-selected {
+          background: rgba(227, 242, 74, 0.1);
+        }
+        .knowledge-doc-icon {
+          width: 8px;
+          min-width: 8px;
+          max-width: 8px;
+          height: 8px;
+          min-height: 8px;
+          max-height: 8px;
+          display: grid;
+          place-items: center;
+          overflow: hidden;
+          margin-top: 2px;
+          color: var(--text-muted);
+        }
+        .knowledge-doc-icon svg {
+          width: 8px;
+          height: 8px;
+          min-width: 8px;
+          min-height: 8px;
+          max-width: 8px;
+          max-height: 8px;
+          display: block;
+          flex: none;
+        }
+        .knowledge-doc-item.is-selected .knowledge-doc-icon {
+          color: var(--lime);
+        }
+        .knowledge-doc-copy {
+          display: block;
+          min-width: 0;
+          flex: 1;
+        }
+        .knowledge-doc-name {
+          display: block;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: var(--text-primary);
+          font-size: 12px;
+          font-weight: 500;
+          line-height: 1.3;
+        }
+        .knowledge-doc-meta {
+          display: block;
+          margin-top: 2px;
+          color: var(--text-muted);
+          font-size: 10.5px;
+          line-height: 1.3;
+        }
+        .knowledge-doc-item.is-selected .knowledge-doc-name {
+          color: var(--lime);
+        }
+        .knowledge-doc-empty,
+        .knowledge-doc-loading {
+          padding: 12px;
+          color: var(--text-muted);
+          font-size: 12px;
+        }
+        .knowledge-view-all {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 9px;
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm);
+          background: transparent;
+          color: var(--text-secondary);
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .knowledge-view-all:hover {
+          border-color: var(--lime-dim);
+          color: var(--lime);
+        }
+
+        .spinner {
+          width: 16px;
+          height: 16px;
+          display: inline-block;
+          margin-right: 7px;
+          border: 2px solid var(--border);
+          border-top-color: var(--lime);
+          border-radius: 50%;
+          vertical-align: middle;
+          animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+
           /* --- Redesigned Document List Section --- */
 
 .doc-list-container {
@@ -1002,31 +1736,6 @@ const documents = Array.isArray(documentsData)
   width: 16px;
   height: 16px;
   opacity: 0.5;
-}
-
-/* States */
-.doc-list-loading {
-  padding: 20px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-muted);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-}
-
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border);
-  border-top-color: var(--lime);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 .doc-list-empty {
@@ -1254,6 +1963,17 @@ const documents = Array.isArray(documentsData)
           background: var(--border);
         }
 
+        .welcome-title {
+          min-height: 240px;
+          display: grid;
+          place-items: center;
+          text-align: center;
+          color: var(--lime);
+          font-size: clamp(20px, 3vw, 32px);
+          line-height: 1.55;
+          padding: 24px;
+        }
+
         .msg {
           display: flex;
           gap: 12px;
@@ -1294,12 +2014,43 @@ const documents = Array.isArray(documentsData)
           background: var(--surface-3);
           color: var(--text-secondary);
         }
+        .msg-avatar img,
+        .avatar img {
+          width: 100%;
+          height: 100%;
+          display: block;
+          border-radius: inherit;
+          object-fit: cover;
+        }
 
         .bubble-wrap {
           display: flex;
           flex-direction: column;
           gap: 6px;
           max-width: 78%;
+        }
+        .answer-sources {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin-top: 2px;
+        }
+        .answer-sources button {
+          max-width: 100%;
+          padding: 5px 7px;
+          overflow: hidden;
+          border: 1px solid var(--lime-dim);
+          border-radius: 6px;
+          background: rgba(227, 242, 74, 0.07);
+          color: var(--lime);
+          font: inherit;
+          font-size: 10px;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          cursor: pointer;
+        }
+        .answer-sources button:hover {
+          background: rgba(227, 242, 74, 0.15);
         }
         .msg.user .bubble-wrap {
           align-items: flex-end;
@@ -1325,6 +2076,60 @@ const documents = Array.isArray(documentsData)
         }
         .bubble :global(p + p) {
           margin-top: 10px;
+        }
+        .markdown-answer :global(h1),
+        .markdown-answer :global(h2),
+        .markdown-answer :global(h3) {
+          margin: 14px 0 7px;
+          color: var(--lime);
+          font-weight: 650;
+          line-height: 1.3;
+        }
+        .markdown-answer :global(h1) { font-size: 19px; }
+        .markdown-answer :global(h2) { font-size: 17px; }
+        .markdown-answer :global(h3) { font-size: 15px; }
+        .markdown-answer :global(h1:first-child),
+        .markdown-answer :global(h2:first-child),
+        .markdown-answer :global(h3:first-child) {
+          margin-top: 0;
+        }
+        .markdown-answer :global(ul),
+        .markdown-answer :global(ol) {
+          margin: 8px 0;
+          padding-left: 20px;
+        }
+        .markdown-answer :global(li + li) {
+          margin-top: 4px;
+        }
+        .markdown-answer :global(strong) {
+          color: var(--lime);
+          font-weight: 650;
+        }
+        .markdown-answer :global(blockquote) {
+          margin: 10px 0;
+          padding: 7px 11px;
+          border-left: 2px solid var(--lime-dim);
+          color: var(--text-secondary);
+        }
+        .markdown-answer :global(code) {
+          padding: 2px 5px;
+          border-radius: 4px;
+          background: var(--surface-3);
+          color: var(--lime);
+          font-family: "JetBrains Mono", monospace;
+          font-size: 0.88em;
+        }
+        .markdown-answer :global(pre) {
+          margin: 10px 0;
+          padding: 11px;
+          overflow-x: auto;
+          border: 1px solid var(--border);
+          border-radius: 7px;
+          background: var(--surface-2);
+        }
+        .markdown-answer :global(pre code) {
+          padding: 0;
+          background: transparent;
         }
         .bubble :global(table) {
           margin-top: 10px;
@@ -1609,6 +2414,31 @@ const documents = Array.isArray(documentsData)
           gap: 4px;
         }
 
+        .upload-btn {
+          width: 32px;
+          height: 32px;
+          display: grid;
+          place-items: center;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          background: var(--surface-2);
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition: color 0.15s ease, border-color 0.15s ease;
+        }
+        .upload-btn:hover:not(:disabled) {
+          color: var(--lime);
+          border-color: var(--lime-dim);
+        }
+        .upload-btn:disabled {
+          cursor: wait;
+          opacity: 0.55;
+        }
+        .upload-btn svg {
+          width: 16px;
+          height: 16px;
+        }
+
         .send-btn {
           width: 36px;
           height: 36px;
@@ -1651,6 +2481,20 @@ const documents = Array.isArray(documentsData)
         .chat-mode {
           color: var(--text-secondary);
         }
+        .clear-document-context {
+          margin-left: 8px;
+          padding: 2px 6px;
+          border: 1px solid var(--lime-dim);
+          border-radius: 999px;
+          background: transparent;
+          color: var(--lime);
+          font: inherit;
+          font-size: 10px;
+          cursor: pointer;
+        }
+        .clear-document-context:hover {
+          background: rgba(227, 242, 74, 0.1);
+        }
         .composer-hint :global(kbd) {
           font-family: inherit;
           background: var(--surface-2);
@@ -1670,6 +2514,16 @@ const documents = Array.isArray(documentsData)
           flex-direction: column;
           gap: var(--sp-3);
         }
+        .main.sidebar-is-hidden .sidebar {
+          display: none;
+        }
+        .main.sidebar-is-hidden .chat-col {
+          border-right: none;
+        }
+        .sidebar-scrim,
+        .sidebar-close {
+          display: none;
+        }
 
         .profile-block {
           background: var(--lime);
@@ -1678,12 +2532,19 @@ const documents = Array.isArray(documentsData)
           display: flex;
           flex-direction: column;
           gap: 4px;
+          position: relative;
         }
         .profile-card {
           display: flex;
+          width: 100%;
           align-items: center;
           gap: 12px;
           padding: 14px 12px;
+          border: 0;
+          border-radius: 8px;
+          background: transparent;
+          text-align: left;
+          cursor: pointer;
         }
         .avatar {
           width: 40px;
@@ -1724,6 +2585,167 @@ const documents = Array.isArray(documentsData)
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+        }
+        .profile-menu {
+          position: absolute;
+          z-index: 20;
+          top: calc(100% + 8px);
+          left: 0;
+          right: 0;
+          padding: 5px;
+          border: 1px solid var(--border);
+          border-radius: 9px;
+          background: var(--surface-2);
+          box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+        }
+        .profile-menu button {
+          width: 100%;
+          padding: 9px 10px;
+          border: 0;
+          border-radius: 6px;
+          background: transparent;
+          color: var(--text-primary);
+          font: inherit;
+          font-size: 12px;
+          text-align: left;
+          cursor: pointer;
+        }
+        .profile-menu button:hover {
+          background: var(--surface-3);
+        }
+        .profile-menu .logout-action {
+          color: #ff817d;
+        }
+
+        .profile-modal-backdrop {
+          position: fixed;
+          z-index: 100;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          padding: 20px;
+          background: rgba(0, 0, 0, 0.72);
+        }
+        .profile-modal {
+          width: min(100%, 440px);
+          padding: 20px;
+          border: 1px solid var(--lime-dim);
+          border-radius: 16px;
+          background: #202016;
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.65), 0 0 34px rgba(227, 242, 74, 0.08);
+        }
+        .profile-modal-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .profile-modal-header h2 {
+          margin-top: 3px;
+          color: var(--lime);
+          font-size: 18px;
+          font-weight: 650;
+        }
+        .profile-kicker {
+          color: var(--text-muted);
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.12em;
+        }
+        .profile-modal-header button {
+          width: 28px;
+          height: 28px;
+          border: 1px solid transparent;
+          border-radius: 7px;
+          background: var(--surface-2);
+          color: var(--text-secondary);
+          font-size: 21px;
+          line-height: 1;
+          cursor: pointer;
+        }
+        .profile-modal-header button:hover {
+          border-color: var(--lime-dim);
+          color: var(--lime);
+        }
+        .profile-avatar-large {
+          width: 128px;
+          height: 128px;
+          overflow: hidden;
+          margin: 22px auto 18px;
+          border: 3px solid var(--lime);
+          border-radius: 50%;
+          background: var(--surface-2);
+          box-shadow: 0 0 0 4px #202016, 0 0 0 5px var(--lime-dim);
+        }
+        .profile-avatar-large img {
+          width: 100%;
+          height: 100%;
+          display: block;
+          object-fit: cover;
+        }
+        .profile-field {
+          display: block;
+          margin-top: 10px;
+          padding: 9px 11px;
+          border: 1px solid var(--border);
+          border-radius: 7px;
+          background: var(--surface-2);
+          transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+        .profile-field:focus-within {
+          border-color: var(--lime);
+          box-shadow: 0 0 0 3px rgba(227, 242, 74, 0.1);
+        }
+        .profile-field span {
+          display: block;
+          margin-bottom: 4px;
+          color: var(--lime);
+          font-size: 11px;
+        }
+        .profile-field input {
+          width: 100%;
+          border: 0;
+          outline: 0;
+          background: transparent;
+          color: var(--text-primary);
+          font: inherit;
+          font-size: 13px;
+        }
+        .profile-field input:read-only {
+          color: var(--text-muted);
+        }
+        .profile-help {
+          margin: 12px 0 16px;
+          color: var(--text-muted);
+          font-size: 11px;
+          text-align: center;
+        }
+        .profile-modal-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+        }
+        .profile-modal-actions button {
+          padding: 8px 15px;
+          border-radius: 999px;
+          font: inherit;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .profile-cancel {
+          border: 1px solid var(--lime-dim);
+          background: transparent;
+          color: var(--text-primary);
+        }
+        .profile-save {
+          border: 1px solid var(--lime);
+          background: var(--lime);
+          color: var(--lime-text);
+          font-weight: 600;
+          box-shadow: 0 4px 14px rgba(227, 242, 74, 0.18);
+        }
+        .profile-save:disabled {
+          cursor: not-allowed;
+          opacity: 0.55;
         }
         .workspace-row {
           display: flex;
@@ -1767,20 +2789,477 @@ const documents = Array.isArray(documentsData)
           padding: 0 2px;
           margin-bottom: 6px;
         }
+        .chat-history-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 6px;
+        }
+        .chat-history-heading .sidebar-section-label {
+          margin-bottom: 0;
+        }
+        .new-chat-btn {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          padding: 11px 14px;
+          border: 1px solid var(--lime);
+          border-radius: var(--radius);
+          background: var(--lime);
+          color: var(--lime-text);
+          font: inherit;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          box-shadow: 0 5px 18px rgba(227, 242, 74, 0.14);
+          transition: transform 0.15s ease, background 0.15s ease;
+        }
+        .new-chat-btn:hover {
+          background: var(--lime-strong);
+          transform: translateY(-1px);
+        }
+        .new-chat-btn span {
+          font-size: 20px;
+          font-weight: 400;
+          line-height: 0.7;
+        }
+
+        .reference-modal-backdrop,
+        .conversation-modal-backdrop,
+        .delete-modal-backdrop,
+        .pdf-preview-backdrop {
+          position: fixed;
+          z-index: 110;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          padding: 20px;
+          background: rgba(0, 0, 0, 0.66);
+        }
+        .pdf-preview-modal {
+          width: min(960px, calc(100vw - 32px));
+          height: min(760px, calc(100vh - 40px));
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          border: 1px solid var(--lime-dim);
+          border-radius: 14px;
+          background: var(--surface-1);
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.62);
+        }
+        .pdf-preview-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 14px 16px;
+          border-bottom: 1px solid var(--border);
+          background: var(--surface-2);
+        }
+        .pdf-preview-header p {
+          margin: 0 0 3px;
+          color: var(--lime);
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.12em;
+        }
+        .pdf-preview-header h2 {
+          max-width: min(760px, 70vw);
+          margin: 0;
+          overflow: hidden;
+          color: var(--text-primary);
+          font-size: 14px;
+          font-weight: 600;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .pdf-preview-header button {
+          width: 30px;
+          height: 30px;
+          flex: 0 0 auto;
+          border: 1px solid var(--border);
+          border-radius: 7px;
+          background: transparent;
+          color: var(--text-secondary);
+          font-size: 21px;
+          line-height: 1;
+          cursor: pointer;
+        }
+        .pdf-preview-header button:hover {
+          border-color: var(--lime);
+          color: var(--lime);
+        }
+        .pdf-preview-frame {
+          width: 100%;
+          min-height: 0;
+          flex: 1;
+          border: 0;
+          background: #fff;
+        }
+        .reference-modal {
+          width: min(100%, 540px);
+          max-height: min(80vh, 620px);
+          display: flex;
+          flex-direction: column;
+          padding: 20px;
+          border: 1px solid var(--lime-dim);
+          border-radius: 16px;
+          background: #202016;
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.65), 0 0 34px rgba(227, 242, 74, 0.08);
+        }
+        .reference-modal-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .reference-modal-header p {
+          color: var(--text-muted);
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.12em;
+        }
+        .reference-modal-header h2 {
+          margin-top: 4px;
+          color: var(--lime);
+          font-size: 16px;
+          overflow-wrap: anywhere;
+        }
+        .reference-modal-header button {
+          width: 28px;
+          height: 28px;
+          flex: 0 0 auto;
+          border: 1px solid var(--border);
+          border-radius: 7px;
+          background: var(--surface-2);
+          color: var(--text-secondary);
+          font: inherit;
+          font-size: 20px;
+          line-height: 1;
+          cursor: pointer;
+        }
+        .reference-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 7px;
+          margin-top: 14px;
+        }
+        .reference-meta span {
+          padding: 4px 7px;
+          border-radius: 999px;
+          background: rgba(227, 242, 74, 0.1);
+          color: var(--lime);
+          font-size: 11px;
+        }
+        .reference-intro {
+          margin: 14px 0 8px;
+          color: var(--text-secondary);
+          font-size: 12px;
+        }
+        .reference-sections {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          overflow: auto;
+        }
+        .reference-section {
+          display: flex;
+          flex-direction: column;
+          gap: 7px;
+        }
+        .reference-modal blockquote {
+          margin: 0;
+          padding: 13px;
+          overflow: auto;
+          border: 1px solid var(--border);
+          border-left: 3px solid var(--lime);
+          border-radius: 8px;
+          background: var(--surface-2);
+          color: var(--text-primary);
+          font-size: 12px;
+          line-height: 1.65;
+          white-space: pre-wrap;
+        }
+        .reference-done {
+          align-self: flex-end;
+          margin-top: 16px;
+          padding: 8px 14px;
+          border: 1px solid var(--lime);
+          border-radius: 999px;
+          background: var(--lime);
+          color: var(--lime-text);
+          font: inherit;
+          font-size: 12px;
+          font-weight: 650;
+          cursor: pointer;
+        }
+        .conversation-modal {
+          width: min(100%, 360px);
+          padding: 22px;
+          border: 1px solid var(--lime-dim);
+          border-radius: 16px;
+          background: #252518;
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 36px rgba(227, 242, 74, 0.08);
+          text-align: center;
+        }
+        .conversation-modal-badge {
+          width: 40px;
+          height: 40px;
+          display: grid;
+          place-items: center;
+          margin: 0 auto 12px;
+          border-radius: 50%;
+          background: var(--lime);
+          color: var(--lime-text);
+          font-size: 21px;
+          font-weight: 800;
+        }
+        .conversation-modal h2 {
+          color: var(--lime);
+          font-size: 17px;
+          font-weight: 650;
+        }
+        .conversation-modal p {
+          margin-top: 8px;
+          color: var(--text-secondary);
+          font-size: 12px;
+          line-height: 1.55;
+        }
+        .conversation-modal p strong {
+          color: var(--text-primary);
+          overflow-wrap: anywhere;
+        }
+        .conversation-name-label {
+          display: block;
+          margin: 16px 0 6px;
+          color: var(--text-muted);
+          font-size: 11px;
+          text-align: left;
+        }
+        .conversation-modal input {
+          width: 100%;
+          padding: 10px 11px;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          outline: none;
+          background: var(--surface-2);
+          color: var(--text-primary);
+          font: inherit;
+          font-size: 13px;
+        }
+        .conversation-modal input:focus {
+          border-color: var(--lime);
+          box-shadow: 0 0 0 3px rgba(227, 242, 74, 0.1);
+        }
+        .conversation-action-error {
+          color: #ff9b9b !important;
+          text-align: left;
+        }
+        .conversation-modal-actions {
+          display: flex;
+          justify-content: flex-end;
+          gap: 9px;
+          margin-top: 18px;
+        }
+        .conversation-modal-actions button {
+          padding: 9px 13px;
+          border: 1px solid var(--lime-dim);
+          border-radius: 999px;
+          background: transparent;
+          color: var(--text-primary);
+          font: inherit;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .conversation-modal-actions .conversation-primary-button {
+          border-color: var(--lime);
+          background: var(--lime);
+          color: var(--lime-text);
+          font-weight: 650;
+        }
+        .conversation-modal-actions button:disabled {
+          cursor: wait;
+          opacity: 0.6;
+        }
+        .delete-modal {
+          width: min(100%, 390px);
+          padding: 24px;
+          border: 1px solid var(--lime-dim);
+          border-radius: 16px;
+          background: #252518;
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 36px rgba(227, 242, 74, 0.08);
+          text-align: center;
+        }
+        .delete-modal-icon {
+          width: 42px;
+          height: 42px;
+          display: grid;
+          place-items: center;
+          margin: 0 auto 14px;
+          border-radius: 50%;
+          background: var(--lime);
+          color: var(--lime-text);
+          font-size: 22px;
+          font-weight: 700;
+        }
+        .delete-modal h2 {
+          font-size: 17px;
+          font-weight: 600;
+          color: var(--lime);
+        }
+        .delete-modal p {
+          margin-top: 10px;
+          color: var(--text-secondary);
+          font-size: 12px;
+          line-height: 1.55;
+        }
+        .delete-modal p strong {
+          color: var(--text-primary);
+          overflow-wrap: anywhere;
+        }
+        .delete-modal-actions {
+          display: flex;
+          justify-content: center;
+          gap: 10px;
+          margin-top: 20px;
+        }
+        .delete-modal-actions button {
+          padding: 9px 14px;
+          border: 1px solid var(--lime-dim);
+          border-radius: 999px;
+          background: transparent;
+          color: var(--text-primary);
+          font: inherit;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .delete-modal-actions .delete-confirm-btn {
+          border-color: var(--lime);
+          background: var(--lime);
+          color: var(--lime-text);
+          font-weight: 600;
+        }
+        .delete-confirm-btn:disabled {
+          cursor: wait;
+          opacity: 0.6;
+        }
+        .knowledge-base-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 6px;
+        }
+        .knowledge-base-heading .sidebar-section-label {
+          margin-bottom: 0;
+        }
+        .knowledge-upload-btn {
+          width: 22px;
+          height: 22px;
+          display: grid;
+          place-items: center;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          background: var(--surface-2);
+          color: var(--lime);
+          font-size: 18px;
+          line-height: 1;
+          cursor: pointer;
+        }
+        .knowledge-upload-btn:hover:not(:disabled) {
+          border-color: var(--lime-dim);
+          background: rgba(227, 242, 74, 0.1);
+        }
+        .knowledge-upload-btn:disabled {
+          cursor: wait;
+          opacity: 0.6;
+        }
 
        
 
         .sb-row {
           display: flex;
+          width: 100%;
           align-items: center;
           gap: 10px;
           padding: 9px 8px;
+          border: 0;
           border-radius: var(--radius-sm);
+          background: transparent;
+          font-family: inherit;
+          text-align: left;
+          color: inherit;
           cursor: pointer;
           transition: background 0.15s ease;
         }
         .sb-row:hover {
           background: var(--surface-2);
+        }
+        .history-row {
+          position: relative;
+          padding-right: 34px;
+          outline: none;
+        }
+        .history-row:focus-visible {
+          box-shadow: inset 0 0 0 1px var(--lime);
+        }
+        .history-more-button {
+          position: absolute;
+          right: 7px;
+          top: 50%;
+          width: 24px;
+          height: 24px;
+          transform: translateY(-50%);
+          border: 0;
+          border-radius: 6px;
+          background: transparent;
+          color: var(--text-muted);
+          font: inherit;
+          font-size: 16px;
+          line-height: 1;
+          cursor: pointer;
+          opacity: 0.55;
+        }
+        .history-row:hover .history-more-button,
+        .history-more-button:focus-visible,
+        .history-more-button[aria-expanded="true"] {
+          opacity: 1;
+        }
+        .history-more-button:hover {
+          background: var(--surface-3);
+          color: var(--lime);
+        }
+        .history-action-menu {
+          position: absolute;
+          z-index: 20;
+          right: 5px;
+          top: calc(100% - 2px);
+          width: 110px;
+          padding: 4px;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          background: var(--surface-2);
+          box-shadow: 0 10px 20px rgba(0, 0, 0, 0.28);
+        }
+        .history-action-menu button {
+          display: block;
+          width: 100%;
+          padding: 7px 8px;
+          border: 0;
+          border-radius: 5px;
+          background: transparent;
+          color: var(--text-primary);
+          font: inherit;
+          font-size: 12px;
+          text-align: left;
+          cursor: pointer;
+        }
+        .history-action-menu button:hover {
+          background: var(--surface-3);
+        }
+        .history-action-menu .history-delete-button {
+          color: #ff8d8d;
         }
         .sb-row + .sb-row {
           border-top: 1px solid var(--border);
@@ -1794,6 +3273,9 @@ const documents = Array.isArray(documentsData)
         }
         .sb-row.selected {
           background: rgba(227, 242, 74, 0.08);
+        }
+        .document-row.selected .sb-row-title {
+          color: var(--lime);
         }
         
         .doc-checkbox.checked {
@@ -2089,10 +3571,61 @@ const documents = Array.isArray(documentsData)
           }
         }
 
-        /* Small tablets / large phones: drop the sidebar, header search shrinks */
+        /* Small tablets / phones: sidebar becomes a slide-out panel. */
         @media (max-width: 980px) {
           .sidebar {
-            display: none;
+            position: fixed;
+            z-index: 60;
+            top: 64px;
+            right: 0;
+            bottom: 0;
+            width: min(86vw, 340px);
+            padding: 48px var(--sp-3) var(--sp-3);
+            border-left: 1px solid var(--border);
+            box-shadow: -18px 0 38px rgba(0, 0, 0, 0.28);
+            transform: translateX(100%);
+            transition: transform 0.22s ease;
+          }
+          .main.sidebar-is-hidden .sidebar,
+          .main.sidebar-is-open .sidebar {
+            display: flex;
+          }
+          .main.sidebar-is-open .sidebar {
+            transform: translateX(0);
+          }
+          .sidebar-scrim {
+            position: fixed;
+            z-index: 50;
+            top: 64px;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            display: block;
+            border: 0;
+            background: rgba(0, 0, 0, 0.48);
+            cursor: pointer;
+          }
+          .sidebar-close {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            z-index: 1;
+            display: grid;
+            width: 28px;
+            height: 28px;
+            place-items: center;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface-2);
+            color: var(--text-secondary);
+            font: inherit;
+            font-size: 20px;
+            line-height: 1;
+            cursor: pointer;
+          }
+          .sidebar-close:hover {
+            color: var(--lime);
+            border-color: var(--lime-dim);
           }
           .chat-col {
             border-right: none;
@@ -2109,6 +3642,12 @@ const documents = Array.isArray(documentsData)
             padding: 0 var(--sp-2);
             gap: 8px;
           }
+          .sidebar {
+            top: 56px;
+          }
+          .sidebar-scrim {
+            top: 56px;
+          }
           .brand-name {
             display: none;
           }
@@ -2122,6 +3661,9 @@ const documents = Array.isArray(documentsData)
           }
           .header-actions {
             gap: 2px;
+          }
+          .header-actions .icon-btn:not(.sidebar-toggle) {
+            display: none;
           }
 
           .chat-inner {
@@ -2170,7 +3712,8 @@ const documents = Array.isArray(documentsData)
         /* Very small phones */
         @media (max-width: 380px) {
           .header-search {
-            display: none;
+            display: block;
+            min-width: 0;
           }
           .bubble-wrap {
             max-width: 94%;
