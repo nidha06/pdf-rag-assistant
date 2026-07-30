@@ -23,14 +23,25 @@ export async function POST(request:Request){
     
         return respones;
     }catch(error){
-      console.log(error);
-       return NextResponse.json(
+      console.error("Signup failed:", error);
+      const message = error instanceof Error ? error.message : "Signup failed";
+      const databaseUnavailable = /can't reach database server|database.*not.*reachable/i.test(
+        message
+      );
+      const status = databaseUnavailable
+        ? 503
+        : message === "User already exists"
+          ? 409
+          : 400;
+
+      return NextResponse.json(
         {
-            message: error instanceof Error ? error.message : "Login failed"
+          message: databaseUnavailable
+            ? "The database is unavailable. Please try again shortly."
+            : message,
         },
-        {
-            status: 400
-        }
-    );
+        { status }
+      );
     }
+}
 }

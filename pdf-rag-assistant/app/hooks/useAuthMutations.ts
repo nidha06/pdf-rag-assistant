@@ -38,8 +38,19 @@ export const signinRequest = async (payload: LoginPayload): Promise<AuthUser> =>
 };
 
 export const signupRequest = async (payload: SignupPayload): Promise<AuthUser> => {
-  const response = await axios.post("/api/auth/signup", payload);
-  return response.data.user;
+  try {
+    const response = await axios.post("/api/auth/signup", payload);
+    return response.data.user;
+  } catch (error) {
+    if (
+      axios.isAxiosError(error) &&
+      typeof error.response?.data?.message === "string"
+    ) {
+      throw new Error(error.response.data.message);
+    }
+
+    throw error;
+  }
 };
 
 export function useSigninMutation() {
