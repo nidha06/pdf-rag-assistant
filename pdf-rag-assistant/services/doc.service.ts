@@ -162,5 +162,14 @@ export async function deleteDocument(documentId: string, userId: string) {
   await prisma.$transaction([
     prisma.documentChunk.deleteMany({ where: { documentId: document.id } }),
     prisma.document.delete({ where: { id: document.id } }),
+    // Chats store document IDs as an array to retain their scope between
+    // sessions. Remove the deleted ID so opening an older chat cannot surface
+    // or try to query a document that no longer exists.
+    prisma.$executeRaw`
+      UPDATE "Chat"
+      SET "documentIds" = array_remove("documentIds", ${document.id})
+      WHERE "userId" = ${userId}
+        AND ${document.id} = ANY("documentIds")
+    `,
   ]);
 }

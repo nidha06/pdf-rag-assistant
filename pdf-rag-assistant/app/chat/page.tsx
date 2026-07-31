@@ -24,6 +24,8 @@ import {
   type AnswerSource,
   type ChatHistoryMessage,
 } from "../hooks/useChatMutations";
+import { useRouteTransition } from "../route-transition";
+import { AlienLogo, DocmindWordmark } from "../components/AlienLogo";
 
 
 const doodleSvgTile = `
@@ -102,6 +104,54 @@ function formatBytes(bytes?: number | null) {
   return kb > 1024 ? (kb / 1024).toFixed(1) + " MB" : kb.toFixed(0) + " KB";
 }
 
+function TypingSpaceship() {
+  const spaceshipRef = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    let frameId = 0;
+    const startedAt = performance.now();
+
+    const float = (now: number) => {
+      const elapsed = now - startedAt;
+      const offset = Math.sin((elapsed / 900) * Math.PI * 2) * 8;
+
+      if (spaceshipRef.current) {
+        spaceshipRef.current.style.transform = `translateY(${offset}px)`;
+      }
+
+      frameId = requestAnimationFrame(float);
+    };
+
+    frameId = requestAnimationFrame(float);
+    return () => cancelAnimationFrame(frameId);
+  }, []);
+
+  return (
+    <svg
+      ref={spaceshipRef}
+      className="typing-spaceship"
+      viewBox="0 0 72 40"
+      fill="none"
+      aria-hidden="true"
+      style={{
+        display: "block",
+        width: 42,
+        height: 24,
+        flex: "0 0 42px",
+        transformOrigin: "center",
+        willChange: "transform",
+      }}
+    >
+      <path d="M27 20c1-8 5-13 9-13s8 5 9 13H27Z" fill="var(--lime)" opacity=".55" />
+      <path d="M13 22c6-5 14-7 23-7s17 2 23 7c-4 8-13 11-23 11S17 30 13 22Z" fill="var(--lime)" />
+      <path d="M21 24h30" stroke="var(--lime-text)" strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx="27" cy="27" r="2" fill="var(--lime-text)" />
+      <circle cx="36" cy="29" r="2" fill="var(--lime-text)" />
+      <circle cx="45" cy="27" r="2" fill="var(--lime-text)" />
+    </svg>
+  );
+}
+
 export default function DocmindPage() {
   const messages = useDocmindStore((s) => s.messages);
   const input = useDocmindStore((s) => s.input);
@@ -114,6 +164,9 @@ export default function DocmindPage() {
   const setMessages = useDocmindStore((s) => s.setMessages);
   const submitUserMessage = useDocmindStore((s) => s.submitUserMessage);
   const appendAiMessage = useDocmindStore((s) => s.appendAiMessage);
+  const removeDocumentAttachments = useDocmindStore(
+    (s) => s.removeDocumentAttachments
+  );
 
   const queryClient = useQueryClient();
   const sendMessageMutation = useSendMessageMutation();
@@ -150,6 +203,7 @@ export default function DocmindPage() {
   } | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const startRouteTransition = useRouteTransition();
 
 const {
   data: documentsData,
@@ -211,6 +265,13 @@ const documents = allDocuments.filter(
         setSelectedDocIds((ids) =>
           ids.filter((id) => id !== documentToDelete.id)
         );
+        setActiveDocumentIds((ids) =>
+          ids.filter((id) => id !== documentToDelete.id)
+        );
+        removeDocumentAttachments(documentToDelete.id);
+        setPreviewDocument((document) =>
+          document?.id === documentToDelete.id ? null : document
+        );
         setDocumentToDelete(null);
         queryClient.invalidateQueries({ queryKey: ["documents"] });
       },
@@ -261,6 +322,7 @@ const documents = allDocuments.filter(
   async function logout() {
     await axios.post("/api/auth/logout");
     queryClient.clear();
+    startRouteTransition();
     router.replace("/auth/login");
   }
    
@@ -594,14 +656,9 @@ const documents = allDocuments.filter(
       <header>
         <div className="brand">
           <div className="brand-mark">
-            <svg viewBox="0 0 16 16" fill="none">
-              <rect x="1" y="1" width="6" height="6" fill="#14140F" />
-              <rect x="9" y="1" width="6" height="6" fill="#14140F" opacity="0.55" />
-              <rect x="1" y="9" width="6" height="6" fill="#14140F" opacity="0.55" />
-              <rect x="9" y="9" width="6" height="6" fill="#14140F" />
-            </svg>
+            <AlienLogo />
           </div>
-          <span className="brand-name pixel">DOCMIND</span>
+          <DocmindWordmark />
         </div>
 
         <div className="header-search">
@@ -678,7 +735,28 @@ const documents = allDocuments.filter(
                       {m.role === "ai" && m.text ? (
                         <ReactMarkdown>{m.text}</ReactMarkdown>
                       ) : (
-                        m.content
+                        <>
+                          {m.content}
+                          {m.attachedDocuments?.map((document) => (
+                            <a
+                              className="doc-chip-ref"
+                              key={document.id}
+                              href={`/api/documents/${document.id}/view`}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={`Open ${document.name}`}
+                              onClick={(event) => {
+                                if (document.onOpen) {
+                                  event.preventDefault();
+                                  document.onOpen();
+                                }
+                              }}
+                            >
+                              <span className="file-ico"><FileIcon /></span>
+                              <span>{document.name}</span>
+                            </a>
+                          ))}
+                        </>
                       )}
                     </div>
                     {m.role === "ai" && m.sources && m.sources.length > 0 && (
@@ -694,17 +772,13 @@ const documents = allDocuments.filter(
               ))}
 
               {isTyping && (
-                <div className="msg ai">
+                <div
+                  className="msg ai typing-message"
+                  role="status"
+                  aria-label="Docmind is thinking"
+                >
                   <div className="msg-avatar pixel">AI</div>
-                  <div className="bubble-wrap">
-                    <div className="bubble">
-                      <span className="typing-indicator">
-                        <span />
-                        <span />
-                        <span />
-                      </span>
-                    </div>
-                  </div>
+                  <TypingSpaceship />
                 </div>
               )}
             </div>
@@ -2183,33 +2257,21 @@ const documents = allDocuments.filter(
           height: 10px;
         }
 
-        .typing-indicator {
+        .typing-message {
           display: flex;
-          gap: 4px;
-          padding: 4px 0;
+          align-items: center;
+          gap: 10px;
+          height: 30px;
         }
-        .typing-indicator span {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: var(--lime);
-          animation: blink 1.3s infinite ease-in-out;
+        .typing-message .typing-spaceship {
+          width: 42px;
+          height: 24px;
+          transform-origin: center;
+          will-change: transform;
         }
-        .typing-indicator span:nth-child(2) {
-          animation-delay: 0.15s;
-        }
-        .typing-indicator span:nth-child(3) {
-          animation-delay: 0.3s;
-        }
-        @keyframes blink {
-          0%,
-          80%,
-          100% {
-            opacity: 0.25;
-          }
-          40% {
-            opacity: 1;
-          }
+        .typing-message .msg-avatar {
+          align-self: center;
+          align-items: center;
         }
 
         .input-area {

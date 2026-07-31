@@ -1,4 +1,5 @@
 import { Providers } from "./providers";
+import { RouteTransitionProvider } from "./route-transition";
 
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
@@ -29,7 +30,11 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col"><Providers>{children}</Providers></body>
+      <body className="min-h-full flex flex-col">
+        <Providers>
+          <RouteTransitionProvider>{children}</RouteTransitionProvider>
+        </Providers>
+      </body>
     </html>
   );
 }

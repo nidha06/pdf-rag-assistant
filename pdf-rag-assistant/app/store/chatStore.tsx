@@ -16,6 +16,7 @@ export type Message = {
   time: string;
   text?: string;
   sources?: MessageSource[];
+  attachedDocuments?: MessageDocumentAttachment[];
   content: ReactNode;
 };
 
@@ -73,6 +74,7 @@ interface DocmindState {
   setDragOver: (value: boolean) => void;
   setIsTyping: (value: boolean) => void;
   setMessages: (messages: Message[]) => void;
+  removeDocumentAttachments: (documentId: string) => void;
 
   sendMessage: () => void;
   submitUserMessage: (
@@ -94,6 +96,15 @@ export const useDocmindStore = create<DocmindState>((set, get) => ({
   setDragOver: (value) => set({ dragOver: value }),
   setIsTyping: (value) => set({ isTyping: value }),
   setMessages: (messages) => set({ messages, isTyping: false }),
+  removeDocumentAttachments: (documentId) =>
+    set((state) => ({
+      messages: state.messages.map((message) => ({
+        ...message,
+        attachedDocuments: message.attachedDocuments?.filter(
+          (document) => document.id !== documentId
+        ),
+      })),
+    })),
 
   sendMessage: () => {
     const text = get().input.trim();
@@ -147,69 +158,8 @@ export const useDocmindStore = create<DocmindState>((set, get) => ({
       role: "user",
       time: now(),
       text,
-      content: (
-        <>
-          <p>{text}</p>
-          {attachedDocuments.map((document) => (
-            <a
-              className="doc-chip-ref"
-              key={document.id}
-              href={`/api/documents/${document.id}/view`}
-              target="_blank"
-              rel="noreferrer"
-              title={`Open ${document.name}`}
-              onClick={(event) => {
-                if (document.onOpen) {
-                  event.preventDefault();
-                  document.onOpen();
-                }
-              }}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                maxWidth: 190,
-                marginTop: 7,
-                padding: "4px 7px",
-                border: "1px solid var(--border)",
-                borderRadius: 6,
-                background: "var(--surface-2)",
-                color: "var(--text-secondary)",
-                fontSize: 11,
-                lineHeight: 1.2,
-                textDecoration: "none",
-                cursor: "pointer",
-              }}
-            >
-              <span
-                className="file-ico"
-                style={{
-                  display: "grid",
-                  width: 17,
-                  height: 17,
-                  minWidth: 17,
-                  flex: "0 0 17px",
-                  placeItems: "center",
-                  borderRadius: 4,
-                  color: "var(--lime)",
-                }}
-              >
-                <FileIcon />
-              </span>
-              <span
-                style={{
-                  minWidth: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {document.name}
-              </span>
-            </a>
-          ))}
-        </>
-      ),
+      attachedDocuments,
+      content: <p>{text}</p>,
     };
 
     set((state) => ({

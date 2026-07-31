@@ -4,6 +4,8 @@ import { useRef, useState } from "react";
 import { useUploadFilesMutation } from "../hooks/useKnowledgeBaseMutations";
 import { useCurrentUser } from "../hooks/useUserMutations";
 import { useRouter } from "next/navigation";
+import { useRouteTransition } from "../route-transition";
+import { AlienLogo, DocmindWordmark } from "../components/AlienLogo";
 
 /**
  * Docmind — Knowledge base upload page
@@ -98,6 +100,7 @@ export default function KnowledgeBasePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const {data:user} = useCurrentUser()
   const router = useRouter();
+  const startRouteTransition = useRouteTransition();
   
   console.log("USER DETAILS: ",user);
   function addFiles(fileList: FileList | File[]) {
@@ -129,6 +132,7 @@ export default function KnowledgeBasePage() {
 
   function handleBrowseFiles(){
     if(!user){
+        startRouteTransition();
         router.push("/auth/login");
         return 
     }
@@ -158,7 +162,8 @@ function handleContinue() {
     {
       onSuccess: (data) => {
         console.log(data);
-         window.location.href = "/chat"
+         startRouteTransition();
+         router.replace("/chat")
       },
       onError: (err) => {
         console.log(err);
@@ -173,14 +178,9 @@ function handleContinue() {
       <header>
         <div className="brand">
           <div className="brand-mark">
-            <svg viewBox="0 0 16 16" fill="none">
-              <rect x="1" y="1" width="6" height="6" fill="#14140F" />
-              <rect x="9" y="1" width="6" height="6" fill="#14140F" opacity="0.55" />
-              <rect x="1" y="9" width="6" height="6" fill="#14140F" opacity="0.55" />
-              <rect x="9" y="9" width="6" height="6" fill="#14140F" />
-            </svg>
+            <AlienLogo />
           </div>
-          <span className="brand-name pixel">DOCMIND</span>
+          <DocmindWordmark />
         </div>
         <span className="header-tag">Knowledge base setup</span>
       </header>
@@ -188,10 +188,6 @@ function handleContinue() {
       {/* ===== Canvas ===== */}
       <div className="canvas" style={{ backgroundImage: doodleBackground }}>
         <div className="hero">
-          <div className="logo-badge">
-            <img src={logoDataUri} alt="Docmind logo" />
-          </div>
-
           <div>
             <div className="hero-title pixel">DOCMIND</div>
             <p className="hero-sub">

@@ -4,6 +4,74 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Shared Docmind brand mark. Keeping it as SVG makes the alien-head silhouette
+   sharp and consistent on every screen and at every size. */
+.docmind-alien-logo {
+  display: block;
+  width: 84%;
+  height: 84%;
+  color: #1a1c04;
+}
+
+.docmind-alien-logo.alien-logo-light {
+  color: #e3f24a;
+}
+
+.brand-name {
+  font-family: "Press Start 2P", "Geist Mono", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e3f24a;
+}
+
+.brand-name.brand-name-dark {
+  color: #1a1c04;
+}
+
+.app-loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  background: #121210;
+  color: #e3f24a;
+}
+
+.app-loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-loading-alien {
+  display: grid;
+  width: 68px;
+  height: 68px;
+  place-items: center;
+  border-radius: 18px;
+  background: #e3f24a;
+}
+
+.app-loading-wordmark {
+  font-family: "Press Start 2P", "Geist Mono", monospace;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.app-loading-label {
+  color: #9d9d90;
+  font-family: var(--font-geist-sans), sans-serif;
+  font-size: 12px;
+}
+
+
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -49,8 +117,8 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --background: #121210;
+  --foreground: #f6f5ec;
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
@@ -121,10 +189,16 @@
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
-  }
   html {
+    min-height: 100%;
+    background: #121210;
     @apply font-sans;
+  }
+  body {
+    min-height: 100%;
+    margin: 0;
+    background: #121210;
+    color: #f6f5ec;
+    @apply bg-background text-foreground;
   }
 }

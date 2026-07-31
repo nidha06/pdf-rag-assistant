@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "../../store/authStore";
 import { useSigninMutation } from "../../hooks/useAuthMutations";
 import { useCurrentUser } from "../../hooks/useUserMutations";
+import { useRouteTransition } from "../../route-transition";
+import { AlienLogo, DocmindWordmark } from "../../components/AlienLogo";
 
 /**
  * Docmind — Sign in
@@ -140,6 +143,7 @@ export default function LoginPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const setUser = useAuthStore((s) => s.setUser);
+  const startRouteTransition = useRouteTransition();
 
   // Login-form fields are transient UI state, not app-wide state, so
   // they live here rather than on the auth store (which only tracks
@@ -163,13 +167,30 @@ export default function LoginPage() {
   // If a session already exists (cookie still valid), skip the form
   // and go straight in — populating the store from the fetched user
   // rather than from stale local state.
-  const { data: existingUser, isSuccess: hasExistingUser } = useCurrentUser();
+  const {
+    data: existingUser,
+    isSuccess: hasExistingUser,
+    isLoading: isCheckingExistingSession,
+  } = useCurrentUser();
   useEffect(() => {
     if (hasExistingUser && existingUser) {
       setUser(existingUser);
-      router.replace(existingUser.hasDocuments ? "/chat" : "/documentManager");
+      startRouteTransition();
+      router.replace("/chat");
     }
-  }, [hasExistingUser, existingUser, router, setUser]);
+  }, [
+    hasExistingUser,
+    existingUser,
+    router,
+    setUser,
+    startRouteTransition,
+  ]);
+
+  // Avoid briefly rendering the email/password fields for users who already
+  // have a valid session and will immediately be redirected to chat.
+  if (isCheckingExistingSession) {
+    return <div aria-busy="true" style={{ minHeight: "100vh", background: "#121210" }} />;
+  }
 
   function handleFormSubmit(e: React.SyntheticEvent) {
     e.preventDefault();
@@ -185,7 +206,8 @@ export default function LoginPage() {
             setUser(data);
             queryClient.setQueryData(["current-user"], data);
           }
-          router.push(data.hasDocuments ? "/chat" : "/documentManager");
+          startRouteTransition();
+          router.push("/chat");
         },
       }
     );
@@ -198,9 +220,9 @@ export default function LoginPage() {
         <div className="brand-panel-inner">
           <div className="brand">
             <div className="brand-mark">
-              <img src={logoDataUri} alt="Docmind logo" />
+              <AlienLogo className="alien-logo-light" />
             </div>
-            <span className="brand-name pixel">DOCMIND</span>
+            <DocmindWordmark dark />
           </div>
 
           <div className="illustration">
@@ -353,9 +375,9 @@ export default function LoginPage() {
         <div className="form-panel-top">
           <span className="mobile-brand pixel">
             <span className="mobile-brand-mark">
-              <img src={logoDataUri} alt="Docmind logo" />
+              <AlienLogo />
             </span>
-            DOCMIND
+            <DocmindWordmark />
           </span>
           
         </div>
@@ -424,9 +446,9 @@ export default function LoginPage() {
                 <label className="field-label" htmlFor="password">
                   Password
                 </label>
-                <a className="forgot-link" href="/forgot-password">
+                <Link className="forgot-link" href="/forgot-password">
                   Forgot password?
-                </a>
+                </Link>
               </div>
               <div className={`field ${password ? "filled" : ""}`}>
                 <span className="field-ico">
@@ -481,9 +503,9 @@ export default function LoginPage() {
                   </>
                 )}
               </button>
-              <a className="signup-link" href="/auth/register">
+              <Link className="signup-link" href="/auth/register">
             Need an account? <strong>Sign up</strong>
-          </a>
+          </Link>
             </form>
 
            
@@ -541,10 +563,11 @@ export default function LoginPage() {
         }
 
         .app {
-          height: 100vh;
+          min-height: 100dvh;
+          height: 100dvh;
           width: 100%;
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: minmax(360px, 0.92fr) minmax(420px, 1.08fr);
           background: var(--bg);
           overflow: hidden;
         }
@@ -577,6 +600,9 @@ export default function LoginPage() {
           display: flex;
           align-items: center;
           gap: 12px;
+          position: absolute;
+          top: 24px;
+          left: 28px;
         }
         .brand-mark {
           width: 32px;
@@ -594,10 +620,7 @@ export default function LoginPage() {
           height: 84%;
           object-fit: contain;
         }
-        .brand-name {
-          font-size: 13px;
-          color: var(--lime-text);
-        }
+        .brand-name { font-size: 13px; }
 
         .illustration {
           width: calc(100% + 24px);
@@ -671,12 +694,12 @@ export default function LoginPage() {
           overflow: hidden;
         }
        
-          .form-panel-top {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 24px 32px 0;
-}
+        .form-panel-top {
+          display: none;
+          align-items: center;
+          justify-content: flex-start;
+          padding: 22px 28px 0;
+        }
         
         .mobile-brand {
           display: flex;
@@ -695,10 +718,9 @@ export default function LoginPage() {
           justify-content: center;
           overflow: hidden;
         }
-        .mobile-brand-mark img {
+        .mobile-brand-mark :global(svg) {
           width: 84%;
           height: 84%;
-          object-fit: contain;
         }
         .signup-link {
           font-size: 12.5px;
@@ -713,25 +735,29 @@ export default function LoginPage() {
         .form-wrap {
           flex: 1;
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           justify-content: center;
-          padding: 40px 32px;
+          padding: clamp(36px, 7vw, 92px);
           min-height: 0;
+          overflow-y: auto;
         }
 
         .form-card {
           width: 100%;
-          max-width: 380px;
+          max-width: 420px;
+          margin: auto 0;
         }
         .form-card h2 {
-          font-size: 24px;
+          font-size: clamp(26px, 3vw, 34px);
           font-weight: 700;
-          letter-spacing: -0.01em;
+          letter-spacing: -0.03em;
+          line-height: 1.08;
         }
         .form-sub {
           margin-top: 8px;
           font-size: 14px;
           color: var(--text-secondary);
+          line-height: 1.55;
         }
 
         .oauth-row {
@@ -807,7 +833,7 @@ export default function LoginPage() {
           display: flex;
           align-items: center;
           gap: 10px;
-          height: 46px;
+          height: 48px;
           padding: 0 12px;
           background: var(--surface);
           border: 1px solid var(--border);
@@ -919,7 +945,7 @@ export default function LoginPage() {
 
         .submit-btn {
           width: 100%;
-          height: 46px;
+          height: 48px;
           margin-top: 24px;
           border: none;
           border-radius: var(--radius-sm);
@@ -992,6 +1018,7 @@ export default function LoginPage() {
           }
           .app {
             grid-template-columns: 1fr;
+            min-height: 100dvh;
             height: auto;
             overflow: visible;
           }
@@ -999,12 +1026,22 @@ export default function LoginPage() {
             display: none;
           }
           .form-panel {
+            min-height: 100dvh;
             height: auto;
             overflow: visible;
           }
           .form-panel-top{
-      justify-content: space-between;
-  }
+            display: flex;
+            justify-content: space-between;
+            padding: 22px clamp(20px, 6vw, 40px) 0;
+          }
+          .form-wrap {
+            align-items: flex-start;
+            padding: 44px clamp(20px, 8vw, 56px);
+          }
+          .form-card {
+            margin: 0 auto;
+          }
           .mobile-signup {
             display: block;
           }
@@ -1015,8 +1052,9 @@ export default function LoginPage() {
 
         @media (max-width: 420px) {
           .form-wrap {
-            padding: 28px 20px;
+            padding: 32px 20px 40px;
           }
+          .form-card h2 { font-size: 27px; }
           .oauth-row {
             flex-direction: column;
           }

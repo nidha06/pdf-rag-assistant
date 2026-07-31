@@ -1,8 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuthStore } from "../../store/authStore";
 import { useSignupMutation } from "../../hooks/useAuthMutations";
+import { useRouteTransition } from "../../route-transition";
+import { AlienLogo, DocmindWordmark } from "../../components/AlienLogo";
 
 /**
  * Docmind — Sign up
@@ -141,6 +145,8 @@ const doodleBackground = `url("data:image/svg+xml,${encodeURIComponent(doodleSvg
 
 export default function SignupPage() {
   const setUser = useAuthStore((s) => s.setUser);
+  const router = useRouter();
+  const startRouteTransition = useRouteTransition();
 
   // Signup-form fields are transient UI state, not app-wide state —
   // the auth store only tracks the signed-in `user`, so it has no
@@ -183,7 +189,8 @@ export default function SignupPage() {
         onSuccess: (data) => {
           if (data) setUser(data);
           console.log("the data is stored successfullyyy")
-          window.location.href = "/documentManager";
+          startRouteTransition();
+          router.replace("/documentManager");
         },
       }
     );
@@ -196,9 +203,9 @@ export default function SignupPage() {
         <div className="brand-panel-inner">
           <div className="brand">
             <div className="brand-mark">
-              <img src={logoDataUri} alt="Docmind logo" />
+              <AlienLogo className="alien-logo-light" />
             </div>
-            <span className="brand-name pixel">DOCMIND</span>
+            <DocmindWordmark dark />
           </div>
 
           <div className="illustration">
@@ -352,13 +359,13 @@ export default function SignupPage() {
         <div className="form-panel-top">
           <span className="mobile-brand pixel">
             <span className="mobile-brand-mark">
-              <img src={logoDataUri} alt="Docmind logo" />
+              <AlienLogo />
             </span>
-            DOCMIND
+            <DocmindWordmark />
           </span>
-          <a className="signup-link" href="/login">
+          <Link className="signup-link" href="/auth/login">
             Already have an account? <strong>Sign in</strong>
-          </a>
+          </Link>
         </div>
 
         <div className="form-wrap">
@@ -494,7 +501,7 @@ export default function SignupPage() {
                     <path d="M20 6 9 17l-5-5" />
                   </svg>
                 </span>
-                I agree to the <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>
+                I agree to the <Link href="/terms">Terms</Link> and <Link href="/privacy">Privacy Policy</Link>
               </label>
 
               <button className="submit-btn" type="submit" disabled={!canSubmit || submitting}>
@@ -513,7 +520,7 @@ export default function SignupPage() {
                 )}
               </button>
               <p className="mobile-signup">
-              Already have an account? <a href="/login">Sign in</a>
+              Already have an account? <Link href="/auth/login">Sign in</Link>
             </p>
             </form>
 
@@ -574,10 +581,11 @@ export default function SignupPage() {
         }
 
         .app {
-          height: 100vh;
+          min-height: 100dvh;
+          height: 100dvh;
           width: 100%;
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: minmax(360px, 0.92fr) minmax(420px, 1.08fr);
           background: var(--bg);
           overflow: hidden;
         }
@@ -610,6 +618,9 @@ export default function SignupPage() {
           display: flex;
           align-items: center;
           gap: 12px;
+          position: absolute;
+          top: 24px;
+          left: 28px;
         }
         .brand-mark {
           width: 32px;
@@ -627,10 +638,7 @@ export default function SignupPage() {
           height: 84%;
           object-fit: contain;
         }
-        .brand-name {
-          font-size: 13px;
-          color: var(--lime-text);
-        }
+        .brand-name { font-size: 13px; }
 
         .illustration {
           width: calc(100% + 24px);
@@ -706,7 +714,7 @@ export default function SignupPage() {
         .form-panel-top {
           display: none;
           align-items: center;
-          justify-content: space-between;
+          justify-content: flex-start;
           padding: 24px 28px 0;
         }
         .mobile-brand {
@@ -726,10 +734,9 @@ export default function SignupPage() {
           justify-content: center;
           overflow: hidden;
         }
-        .mobile-brand-mark img {
+        .mobile-brand-mark :global(svg) {
           width: 84%;
           height: 84%;
-          object-fit: contain;
         }
         .signup-link {
           font-size: 12.5px;
@@ -744,26 +751,29 @@ export default function SignupPage() {
         .form-wrap {
           flex: 1;
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           justify-content: center;
-          padding: 28px 32px;
+          padding: clamp(36px, 7vw, 92px);
           min-height: 0;
           overflow-y: auto;
         }
 
         .form-card {
           width: 100%;
-          max-width: 380px;
+          max-width: 420px;
+          margin: auto 0;
         }
         .form-card h2 {
-          font-size: 22px;
+          font-size: clamp(26px, 3vw, 34px);
           font-weight: 700;
-          letter-spacing: -0.01em;
+          letter-spacing: -0.03em;
+          line-height: 1.08;
         }
         .form-sub {
           margin-top: 8px;
           font-size: 14px;
           color: var(--text-secondary);
+          line-height: 1.55;
         }
 
         .oauth-row {
@@ -833,7 +843,7 @@ export default function SignupPage() {
           display: flex;
           align-items: center;
           gap: 10px;
-          height: 44px;
+          height: 48px;
           padding: 0 12px;
           background: var(--surface);
           border: 1px solid var(--border);
@@ -963,7 +973,7 @@ export default function SignupPage() {
 
         .submit-btn {
           width: 100%;
-          height: 46px;
+          height: 48px;
           margin-top: 20px;
           border: none;
           border-radius: var(--radius-sm);
@@ -1048,6 +1058,7 @@ export default function SignupPage() {
           }
           .app {
             grid-template-columns: 1fr;
+            min-height: 100dvh;
             height: auto;
             overflow: visible;
           }
@@ -1055,11 +1066,20 @@ export default function SignupPage() {
             display: none;
           }
           .form-panel {
+            min-height: 100dvh;
             height: auto;
             overflow: visible;
           }
           .form-panel-top {
             display: flex;
+            padding: 22px clamp(20px, 6vw, 40px) 0;
+          }
+          .form-wrap {
+            align-items: flex-start;
+            padding: 44px clamp(20px, 8vw, 56px);
+          }
+          .form-card {
+            margin: 0 auto;
           }
           .mobile-signup {
             display: block;
@@ -1074,8 +1094,9 @@ export default function SignupPage() {
 
         @media (max-width: 420px) {
           .form-wrap {
-            padding: 24px 20px;
+            padding: 32px 20px 40px;
           }
+          .form-card h2 { font-size: 27px; }
           .oauth-row {
             flex-direction: column;
           }
