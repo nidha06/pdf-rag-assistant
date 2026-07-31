@@ -162,6 +162,7 @@ export default function LoginPage() {
   const loginMutation = useSigninMutation();
   const submitting = loginMutation.isPending;
   const callbackError = searchParams.get("error");
+  const resetComplete = searchParams.get("reset") === "success";
   const error = callbackError
     ? "We couldn't complete that sign-in. Verify the selected account and try again."
     : loginMutation.isError
@@ -398,6 +399,7 @@ export default function LoginPage() {
           <div className="form-card">
             <h2>Welcome back</h2>
             <p className="form-sub">Sign in to pick up your last conversation.</p>
+            {resetComplete && <div className="form-success">Password updated. Please sign in with your new password.</div>}
 
             <div className="oauth-row">
               <button type="button" className="oauth-btn" onClick={() => handleOAuthSignIn("google")} disabled={Boolean(oauthProvider) || submitting}>
@@ -911,6 +913,16 @@ export default function LoginPage() {
           border: 1px solid rgba(255, 138, 122, 0.25);
           border-radius: var(--radius-sm);
           padding: 8px 10px;
+        }
+
+        .form-success {
+          margin: 14px 0 0;
+          padding: 10px 12px;
+          border: 1px solid rgba(227, 242, 74, 0.45);
+          border-radius: 8px;
+          color: var(--lime);
+          font-size: 12px;
+          line-height: 1.5;
         }
 
         .remember-row {

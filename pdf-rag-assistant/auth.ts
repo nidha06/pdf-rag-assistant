@@ -142,8 +142,28 @@ export const {
 
       return false;
     },
+    async jwt({ token, user }) {
+      if (user?.id) {
+        const databaseUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { sessionVersion: true },
+        });
+        token.sessionVersion = databaseUser?.sessionVersion ?? 0;
+      }
+      return token;
+    },
     async session({ session, token }) {
       if (session.user && token.sub) {
+        const databaseUser = await prisma.user.findUnique({
+          where: { id: token.sub },
+          select: { sessionVersion: true },
+        });
+        if (!databaseUser || databaseUser.sessionVersion !== (token.sessionVersion ?? 0)) {
+          // requireUser() treats an empty id as unauthenticated. Keeping the
+          // shape intact also lets the client resolve the stale session safely.
+          session.user.id = "";
+          return session;
+        }
         session.user.id = token.sub;
       }
 

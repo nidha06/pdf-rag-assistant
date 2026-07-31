@@ -15,6 +15,14 @@ Google requests only `openid`, `email`, and `profile`. GitHub requests
 `read:user` and `user:email` so the application can require a verified primary
 email before allowing a login or linking an existing account.
 
+## Password-reset email setup
+
+Password resets use a six-digit OTP delivered through SMTP with Nodemailer. Set
+`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, and `EMAIL_FROM` in
+your `.env`. Gmail requires a Google App Password (not your usual account
+password). OTPs expire after 10 minutes, can only be used once, and password
+resets invalidate prior application sessions.
+
 ## Getting Started
 
 First, run the development server:

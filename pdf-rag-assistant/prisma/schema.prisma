@@ -22,12 +22,31 @@ model User {
   avatarSeed    String?
   provider      String?
   role          String    @default("USER")
+  sessionVersion Int      @default(0)
   createdAt     DateTime  @default(now())
 
   accounts  Account[]
   sessions  Session[]
   documents Document[]
   chats     Chat[]
+  passwordResetOtps PasswordResetOtp[]
+}
+
+model PasswordResetOtp {
+  id             String   @id @default(cuid())
+  userId         String
+  otpHash        String
+  resetTokenHash String?
+  attempts       Int      @default(0)
+  expiresAt      DateTime
+  verifiedAt     DateTime?
+  usedAt         DateTime?
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([resetTokenHash])
 }
 
 model Document {
