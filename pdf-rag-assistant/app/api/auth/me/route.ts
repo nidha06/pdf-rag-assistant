@@ -1,32 +1,25 @@
-import { verifyToken } from "@/lib/jwt";
 import { getUser } from "@/services/user.service";
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireUser } from "@/lib/auth";
 
 export async function GET(){
     try{
-       const cookieStore = await cookies();
-       const token = cookieStore.get("token")?.value;
-
-       if(!token){
+       const currentUser = await requireUser();
+       if (!currentUser) {
         return NextResponse.json(null);
        }
-
-       const decoded = verifyToken(token);
-       
-       const user = await getUser(decoded.id);
+       const user = await getUser(currentUser.id);
        return NextResponse.json(user);
-    }catch(error){
+    }catch{
        return NextResponse.json(null);
     }
 }
 
 export async function PATCH(request: Request) {
   try {
-    const token = (await cookies()).get("token")?.value;
-
-    if (!token) {
+    const currentUser = await requireUser();
+    if (!currentUser) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
@@ -40,9 +33,8 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const { id } = verifyToken(token);
     const user = await prisma.user.update({
-      where: { id },
+      where: { id: currentUser.id },
       data: { name },
       select: { id: true, name: true, email: true },
     });

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
 import ReactMarkdown from "react-markdown";
 import { Avatar, Style } from "@dicebear/core";
 import lorelei from "@dicebear/styles/lorelei.json";
@@ -320,7 +321,7 @@ const documents = allDocuments.filter(
   }
 
   async function logout() {
-    await axios.post("/api/auth/logout");
+    await signOut({ redirect: false });
     queryClient.clear();
     startRouteTransition();
     router.replace("/auth/login");

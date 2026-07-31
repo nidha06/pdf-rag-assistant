@@ -1,5 +1,20 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Authentication setup
+
+The app uses Auth.js for email/password, Google, and GitHub authentication. Copy
+`.env.example` to `.env` and supply the required values. `AUTH_SECRET` must be a
+long random value; it can be generated with `npx auth secret`.
+
+Create OAuth applications with these redirect URIs for each environment:
+
+- Local: `http://localhost:3000/api/auth/callback/github` and `http://localhost:3000/api/auth/callback/google`
+- Production: `https://your-domain.example/api/auth/callback/github` and `https://your-domain.example/api/auth/callback/google`
+
+Google requests only `openid`, `email`, and `profile`. GitHub requests
+`read:user` and `user:email` so the application can require a verified primary
+email before allowing a login or linking an existing account.
+
 ## Getting Started
 
 First, run the development server:

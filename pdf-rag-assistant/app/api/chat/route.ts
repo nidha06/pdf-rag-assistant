@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { generateAnswer } from "@/services/gemini.service";
 import { prisma } from "@/lib/prisma";
-import { verifyToken } from "@/lib/jwt";
+import { requireUser } from "@/lib/auth";
 import {
   askSelectedDocuments,
 } from "@/services/rag.service";
@@ -114,14 +113,11 @@ export async function POST(request: Request) {
 
     // Document chat is user-scoped, so authenticate before querying the
     // database or using the user's Pinecone namespace.
-    const cookieStore = await cookies();
-    const token = cookieStore.get("token")?.value;
-
-    if (!token) {
+    const currentUser = await requireUser();
+    if (!currentUser) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
-
-    const { id: userId } = verifyToken(token);
+    const userId = currentUser.id;
     const useDocumentContext =
       documentIds.length > 0 && !isCasualGeneralMessage(question);
     console.info(`[chat:${flowId}] authenticated`, {

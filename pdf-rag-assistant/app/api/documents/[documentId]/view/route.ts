@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import { verifyToken } from "@/lib/jwt";
+import { requireUser } from "@/lib/auth";
 
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "documents";
 
@@ -11,13 +10,12 @@ export async function GET(
   { params }: { params: Promise<{ documentId: string }> }
 ) {
   try {
-    const token = (await cookies()).get("token")?.value;
-
-    if (!token) {
+    const currentUser = await requireUser();
+    if (!currentUser) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
-    const { id: userId } = verifyToken(token);
+    const userId = currentUser.id;
     const { documentId } = await params;
     const document = await prisma.document.findFirst({
       where: { id: documentId, userId },

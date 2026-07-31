@@ -2,6 +2,7 @@
 
 import { useMutation } from "@tanstack/react-query";
 import axios from "axios";
+import { signIn } from "next-auth/react";
 
 /**
  * useAuthMutations — the network side of sign-in / sign-up.
@@ -33,14 +34,27 @@ type AuthUser = {
 };
 
 export const signinRequest = async (payload: LoginPayload): Promise<AuthUser> => {
-  const response = await axios.post("/api/auth/login", payload);
-  return response.data.user;
+  const result = await signIn("credentials", {
+    ...payload,
+    callbackUrl: "/chat",
+    redirect: false,
+  });
+
+  if (!result?.ok) {
+    throw new Error(
+      "Email or password is incorrect. Social-auth accounts must use their connected provider."
+    );
+  }
+
+  const response = await axios.get("/api/auth/me");
+  if (!response.data) throw new Error("Unable to establish your session. Please try again.");
+  return response.data;
 };
 
 export const signupRequest = async (payload: SignupPayload): Promise<AuthUser> => {
   try {
-    const response = await axios.post("/api/auth/signup", payload);
-    return response.data.user;
+    await axios.post("/api/auth/signup", payload);
+    return signinRequest({ email: payload.email, password: payload.password });
   } catch (error) {
     if (
       axios.isAxiosError(error) &&

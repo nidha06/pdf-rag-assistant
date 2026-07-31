@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
+// Sign-out is handled by Auth.js at /api/auth/signout.
 export async function POST() {
-  const response = NextResponse.json({ success: true });
-  response.cookies.delete("token");
-  return response;
+  return NextResponse.json(
+    { message: "Use the Auth.js sign-out endpoint." },
+    { status: 410 }
+  );
 }

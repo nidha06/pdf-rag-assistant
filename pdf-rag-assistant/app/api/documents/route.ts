@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { createDocument } from "@/services/doc.service";
 import { getDocuments } from "@/services/doc.service";
 import { deleteDocument } from "@/services/doc.service";
-import { cookies } from "next/headers";
-import { verifyToken } from "@/lib/jwt";
+import { requireUser } from "@/lib/auth";
 
 function isPdfFile(file: File) {
   return (
@@ -15,19 +14,14 @@ function isPdfFile(file: File) {
 
 export async function POST(request: Request) {
   try {
-    const cookieStore = await cookies();
-
-const token = cookieStore.get("token")?.value;
-
-if (!token) {
+    const currentUser = await requireUser();
+    if (!currentUser) {
     return NextResponse.json(
         { message: "Unauthorized" },
         { status: 401 }
     );
 }
-const decoded = verifyToken(token);
-
-const userId = decoded.id;
+    const userId = currentUser.id;
     const formData = await request.formData();
 
     const files = formData.getAll("files") as File[];
@@ -80,20 +74,15 @@ return NextResponse.json(documents);
 
 export async function GET() {
   try {
-    const cookieStore = await cookies();
-
-    const token = cookieStore.get("token")?.value;
-
-    if (!token) {
+    const currentUser = await requireUser();
+    if (!currentUser) {
       return NextResponse.json(
         { message: "Unauthorized" },
         { status: 401 }
       );
     }
 
-    const decoded = verifyToken(token);
-
-    const documents = await getDocuments(decoded.id);
+    const documents = await getDocuments(currentUser.id);
 
     return NextResponse.json(documents);
 
@@ -109,9 +98,8 @@ export async function GET() {
 
 export async function DELETE(request: Request) {
   try {
-    const token = (await cookies()).get("token")?.value;
-
-    if (!token) {
+    const currentUser = await requireUser();
+    if (!currentUser) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
@@ -121,8 +109,7 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ message: "Document ID is required" }, { status: 400 });
     }
 
-    const { id: userId } = verifyToken(token);
-    await deleteDocument(documentId, userId);
+    await deleteDocument(documentId, currentUser.id);
 
     return NextResponse.json({ success: true });
   } catch (error) {

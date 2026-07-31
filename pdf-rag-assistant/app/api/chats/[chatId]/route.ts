@@ -1,20 +1,18 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
-import { verifyToken } from "@/lib/jwt";
+import { requireUser } from "@/lib/auth";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ chatId: string }> }
 ) {
   try {
-    const token = (await cookies()).get("token")?.value;
-
-    if (!token) {
+    const currentUser = await requireUser();
+    if (!currentUser) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
-    const { id: userId } = verifyToken(token);
+    const userId = currentUser.id;
     const { chatId } = await params;
     const chat = await prisma.chat.findFirst({
       where: { id: chatId, userId },
@@ -48,12 +46,12 @@ export async function PATCH(
   { params }: { params: Promise<{ chatId: string }> }
 ) {
   try {
-    const token = (await cookies()).get("token")?.value;
-    if (!token) {
+    const currentUser = await requireUser();
+    if (!currentUser) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
-    const { id: userId } = verifyToken(token);
+    const userId = currentUser.id;
     const { chatId } = await params;
     const body = await request.json();
     const title = typeof body.title === "string" ? body.title.trim() : "";
@@ -91,12 +89,12 @@ export async function DELETE(
   { params }: { params: Promise<{ chatId: string }> }
 ) {
   try {
-    const token = (await cookies()).get("token")?.value;
-    if (!token) {
+    const currentUser = await requireUser();
+    if (!currentUser) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
-    const { id: userId } = verifyToken(token);
+    const userId = currentUser.id;
     const { chatId } = await params;
     const chat = await prisma.chat.findFirst({
       where: { id: chatId, userId },

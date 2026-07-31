@@ -1,19 +1,16 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
-import { verifyToken } from "@/lib/jwt";
+import { requireUser } from "@/lib/auth";
 
 export async function GET() {
   try {
-    const token = (await cookies()).get("token")?.value;
-
-    if (!token) {
+    const currentUser = await requireUser();
+    if (!currentUser) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
 
-    const { id: userId } = verifyToken(token);
     const chats = await prisma.chat.findMany({
-      where: { userId },
+      where: { userId: currentUser.id },
       orderBy: { createAt: "desc" },
       select: { id: true, title: true, createAt: true },
       take: 20,

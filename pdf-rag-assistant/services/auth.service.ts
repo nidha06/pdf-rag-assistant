@@ -1,54 +1,9 @@
 import bcrypt from "bcrypt";
 import { prisma } from "@/lib/prisma";
-import { generateToken } from "@/lib/jwt";
-
-type signinData = {
-    name: string;
-    email: string;
-    password:string;
-}
 type signupData = {
     name: string;
     email: string;
     password: string;
-}
-export async function signinService(data:signinData) {
-    const user = await prisma.user.findUnique({
-        where:{
-            email:data.email
-        }
-    })
-    if(!user){
-        throw new Error("User not found");
-    }
-
-    const validPassword = await bcrypt.compare(
-        data.password,
-        user.password
-    )
-
-    if(!validPassword){
-        throw new Error("invalid password");
-    }
-
-    const hasDocuments = (await prisma.document.count({
-        where: { userId: user.id },
-    })) > 0;
-
-    const token = generateToken({
-        id: user.id,
-        email: user.email,
-    })
-    return{
-        user:{
-            id: user.id,
-        name: user.name,
-        email: user.email,
-        avatarSeed: user.avatarSeed,
-        hasDocuments,
-        },
-        token,
-    }
 }
 export async function signupService(data:signupData){
     const existingUser = await prisma.user.findUnique({
@@ -70,11 +25,6 @@ export async function signupService(data:signupData){
         }
     });
 
-    const token = generateToken({
-        id: user.id,
-        email: user.email,
-    });
-
     return{
         user:{
             id: user.id,
@@ -84,6 +34,5 @@ export async function signupService(data:signupData){
             hasDocuments: false,
 
         },
-        token,
     }
 }
