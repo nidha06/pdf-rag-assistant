@@ -28,7 +28,13 @@ export default function ResetPasswordPage() {
 
   async function readResponse(response: Response) {
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.message ?? "Something went wrong. Please try again.");
+    if (!response.ok) {
+      throw new Error(
+        typeof data.message === "string"
+          ? data.message
+          : "We couldn’t complete that request. Please try again shortly."
+      );
+    }
     return data;
   }
 

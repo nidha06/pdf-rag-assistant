@@ -21,11 +21,19 @@ export default function ForgotPasswordPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message ?? "Unable to send a code.");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(
+        typeof data.message === "string"
+          ? data.message
+          : "We couldn’t send a verification code right now. Please try again shortly."
+      );
       router.push(`/reset-password?email=${encodeURIComponent(email.trim().toLowerCase())}`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to send a code.");
+      setError(
+        cause instanceof Error && cause.message
+          ? cause.message
+          : "We couldn’t send a verification code right now. Please try again shortly."
+      );
     } finally {
       setSubmitting(false);
     }
