@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import {
   askSelectedDocuments,
 } from "@/services/rag.service";
+import { classifyIntent } from "@/services/intent-classifier.service";
 
 
 type ChatHistoryMessage = {
@@ -12,24 +13,8 @@ type ChatHistoryMessage = {
   content: string;
 };
 
-function isCasualGeneralMessage(question: string) {
-  const normalized = question
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (new Set([
-    "hi", "hello", "hey", "hai", "good morning", "good afternoon",
-    "good evening", "how are you", "who are you", "what are you",
-    "what can you do", "what do you do", "whats your name", "what is your name",
-    "tell me a joke", "tell a joke", "thanks", "thank you", "bye", "goodbye",
-  ]).has(normalized)) {
-    return true;
-  }
-
-  return /^(hi|hello|hey|hai|thanks|thank you|bye|goodbye)\b/.test(normalized);
-}
+// Intent classification is now handled by the classifyIntent service
+// which uses LLM-based classification for accurate routing.
 
 function getRateLimitDetails(error: unknown) {
   if (!error || typeof error !== "object") return null;
@@ -74,28 +59,28 @@ export async function POST(request: Request) {
 
     const documentIds: string[] = Array.isArray(body.documentIds)
       ? body.documentIds.filter(
-          (id: unknown): id is string => typeof id === "string"
-        )
+        (id: unknown): id is string => typeof id === "string"
+      )
       : [];
 
     const history: ChatHistoryMessage[] = Array.isArray(body.history)
       ? body.history
-          .filter(
-            (message: unknown): message is ChatHistoryMessage => {
-              if (!message || typeof message !== "object") {
-                return false;
-              }
-
-              const item = message as Record<string, unknown>;
-
-              return (
-                (item.role === "user" ||
-                  item.role === "assistant") &&
-                typeof item.content === "string"
-              );
+        .filter(
+          (message: unknown): message is ChatHistoryMessage => {
+            if (!message || typeof message !== "object") {
+              return false;
             }
-          )
-          .slice(-10)
+
+            const item = message as Record<string, unknown>;
+
+            return (
+              (item.role === "user" ||
+                item.role === "assistant") &&
+              typeof item.content === "string"
+            );
+          }
+        )
+        .slice(-10)
       : [];
 
     console.info(`[chat:${flowId}] received`, {
@@ -118,22 +103,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
     }
     const userId = currentUser.id;
-    const useDocumentContext =
-      documentIds.length > 0 && !isCasualGeneralMessage(question);
+    const intent = await classifyIntent({
+      question,
+      history,
+      hasDocuments: documentIds.length > 0,
+      flowId,
+    });
+    const useDocumentContext = intent === "document";
     console.info(`[chat:${flowId}] authenticated`, {
       userId,
       mode: useDocumentContext ? "document" : "general",
-      retainedDocumentScopeIgnoredForCasualMessage:
-        documentIds.length > 0 && !useDocumentContext,
+      classifiedIntent: intent,
     });
     const requestedChatId =
       typeof body.chatId === "string" ? body.chatId : undefined;
 
     const existingChat = requestedChatId
       ? await prisma.chat.findFirst({
-          where: { id: requestedChatId, userId },
-          select: { id: true },
-        })
+        where: { id: requestedChatId, userId },
+        select: { id: true },
+      })
       : null;
 
     let answer: string;
@@ -198,26 +187,30 @@ export async function POST(request: Request) {
     const chat = existingChat
       ? documentIds.length > 0
         ? await prisma.chat.update({
-            where: { id: existingChat.id },
-            data: { documentIds },
-            select: { id: true },
-          })
+          where: { id: existingChat.id },
+          data: { documentIds },
+          select: { id: true },
+        })
         : existingChat
       : await prisma.chat.create({
-          data: {
-            userId,
-            title: question.slice(0, 60),
-            documentIds,
-          },
-          select: { id: true },
-        });
+        data: {
+          userId,
+          title: question.slice(0, 60),
+          documentIds,
+        },
+        select: { id: true },
+      });
 
-    await prisma.message.createMany({
-      data: [
-        { chatId: chat.id, role: "user", content: question },
-        { chatId: chat.id, role: "assistant", content: answer },
-      ],
-    });
+    const [userMessage, assistantMessage] = await prisma.$transaction([
+      prisma.message.create({
+        data: { chatId: chat.id, role: "user", content: question },
+        select: { id: true },
+      }),
+      prisma.message.create({
+        data: { chatId: chat.id, role: "assistant", content: answer },
+        select: { id: true },
+      }),
+    ]);
 
     console.info(`[chat:${flowId}] complete`, {
       chatId: chat.id,
@@ -227,7 +220,14 @@ export async function POST(request: Request) {
       durationMs: Date.now() - startedAt,
     });
 
-    return NextResponse.json({ answer, sources, mode, chatId: chat.id });
+    return NextResponse.json({
+      answer,
+      sources,
+      mode,
+      chatId: chat.id,
+      userMessageId: userMessage.id,
+      assistantMessageId: assistantMessage.id,
+    });
   } catch (error) {
     console.error(`[chat:${flowId}] failed`, error);
 

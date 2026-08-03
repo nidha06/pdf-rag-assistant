@@ -21,6 +21,7 @@ import {
 import { useCurrentUser } from "../hooks/useUserMutations";
 import {
   useSendMessageMutation,
+  useRegenerateMessageMutation,
   useChatHistory,
   type AnswerSource,
   type ChatHistoryMessage,
@@ -163,14 +164,20 @@ export default function DocmindPage() {
   const setDragOver = useDocmindStore((s) => s.setDragOver);
   const setIsTyping = useDocmindStore((s) => s.setIsTyping);
   const setMessages = useDocmindStore((s) => s.setMessages);
+  const updateMessageText = useDocmindStore((s) => s.updateMessageText);
+  const replaceMessageId = useDocmindStore((s) => s.replaceMessageId);
   const submitUserMessage = useDocmindStore((s) => s.submitUserMessage);
   const appendAiMessage = useDocmindStore((s) => s.appendAiMessage);
   const removeDocumentAttachments = useDocmindStore(
     (s) => s.removeDocumentAttachments
   );
+  const removeMessagesAfter = useDocmindStore(
+    (s) => s.removeMessagesAfter
+  );
 
   const queryClient = useQueryClient();
   const sendMessageMutation = useSendMessageMutation();
+  const regenerateMessageMutation = useRegenerateMessageMutation();
   const uploadFilesMutation = useUploadFilesMutation();
   const deleteDocumentMutation = useDeleteDocumentMutation();
   const isSending = sendMessageMutation.isPending;
@@ -202,37 +209,41 @@ export default function DocmindPage() {
     id: string;
     name: string;
   } | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingMessageText, setEditingMessageText] = useState("");
+  const [savingMessageEditId, setSavingMessageEditId] = useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const startRouteTransition = useRouteTransition();
 
-const {
-  data: documentsData,
-  isLoading,
-  error,
-} = useDocuments();
+  const {
+    data: documentsData,
+    isLoading,
+    error,
+  } = useDocuments();
   const { data: chatHistory = [] } = useChatHistory();
 
-const allDocuments = Array.isArray(documentsData)
-  ? documentsData
-  : documentsData?.documents ?? [];
+  const allDocuments = Array.isArray(documentsData)
+    ? documentsData
+    : documentsData?.documents ?? [];
 
-// Only indexed documents can be searched. Failed or still-processing uploads
-// must not be selectable for document chat.
-const documents = allDocuments.filter(
-  (document: any) => document.status === "READY"
-);
+  // Only indexed documents can be searched. Failed or still-processing uploads
+  // must not be selectable for document chat.
+  const documents = allDocuments.filter(
+    (document: any) => document.status === "READY"
+  );
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const filteredDocuments = normalizedSearch
     ? documents.filter((document: any) =>
-        document.fileName.toLowerCase().includes(normalizedSearch)
-      )
+      document.fileName.toLowerCase().includes(normalizedSearch)
+    )
     : documents;
   const filteredChatHistory = normalizedSearch
     ? chatHistory.filter((chat) =>
-        chat.title.toLowerCase().includes(normalizedSearch)
-      )
+      chat.title.toLowerCase().includes(normalizedSearch)
+    )
     : chatHistory;
   const visibleSidebarDocs = filteredDocuments.slice(0, SIDEBAR_DOC_LIMIT);
   const hasMoreDocs = filteredDocuments.length > SIDEBAR_DOC_LIMIT;
@@ -326,10 +337,10 @@ const documents = allDocuments.filter(
     startRouteTransition();
     router.replace("/auth/login");
   }
-   
-//   if (isLoading) {
-//   return <div>Loading...</div>;
-// }
+
+  //   if (isLoading) {
+  //   return <div>Loading...</div>;
+  // }
   function sendMessage() {
     const question = input.trim();
 
@@ -359,7 +370,10 @@ const documents = allDocuments.filter(
       }));
 
     // Adds the user's message to Zustand and clears the composer.
-    submitUserMessage(attachedDocuments);
+    const pendingUserMessageId = submitUserMessage(attachedDocuments);
+    // Composer Enter creates a new message and moves the conversation down.
+    // Editing an existing message uses a separate handler and never adds a duplicate.
+    scrollChatToBottom(true);
     setSelectedDocIds([]);
     setActiveDocumentIds(documentIds);
 
@@ -373,14 +387,24 @@ const documents = allDocuments.filter(
       },
       {
         onSuccess: (result) => {
+          if (pendingUserMessageId) replaceMessageId(pendingUserMessageId, result.userMessageId);
           appendAiMessage(result.answer, result.sources);
+          // The generated assistant message is persisted by the API as well.
+          // Update its temporary client id so later message actions use it.
+          setMessages((() => {
+            const current = useDocmindStore.getState().messages;
+            const last = current[current.length - 1];
+            return last?.role === "ai"
+              ? [...current.slice(0, -1), { ...last, id: result.assistantMessageId }]
+              : current;
+          })());
           setChatId(result.chatId);
           queryClient.invalidateQueries({ queryKey: ["chat-history"] });
         },
         onError: (error) => {
           const message =
             axios.isAxiosError(error) &&
-            typeof error.response?.data?.message === "string"
+              typeof error.response?.data?.message === "string"
               ? error.response.data.message
               : "Sorry, something went wrong reaching the model. Please try again.";
 
@@ -398,6 +422,17 @@ const documents = allDocuments.filter(
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  function scrollChatToBottom(smooth = false) {
+    requestAnimationFrame(() => {
+      const element = scrollRef.current;
+      if (!element) return;
+      element.scrollTo({
+        top: element.scrollHeight,
+        behavior: smooth ? "smooth" : "auto",
+      });
+    });
+  }
+
   useEffect(() => {
     const desktopMedia = window.matchMedia("(min-width: 981px)");
     const syncSidebarForViewport = () => setIsSidebarOpen(desktopMedia.matches);
@@ -408,7 +443,7 @@ const documents = allDocuments.filter(
   }, []);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    scrollChatToBottom();
   }, [messages, isTyping]);
 
   useEffect(() => {
@@ -457,8 +492,8 @@ const documents = allDocuments.filter(
         onSuccess: (uploadedDocuments) => {
           const uploadedIds = Array.isArray(uploadedDocuments)
             ? uploadedDocuments
-                .map((document) => document?.id)
-                .filter((id): id is string => typeof id === "string")
+              .map((document) => document?.id)
+              .filter((id): id is string => typeof id === "string")
             : [];
 
           if (uploadedIds.length > 0) {
@@ -473,6 +508,72 @@ const documents = allDocuments.filter(
           appendAiMessage(
             "One of your files didn't upload. Please try dropping it again."
           );
+        },
+      }
+    );
+  }
+
+  async function copyMessage(messageId: string, text?: string) {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMessageId(messageId);
+      window.setTimeout(() => setCopiedMessageId((id) => id === messageId ? null : id), 1800);
+    } catch {
+      setCopiedMessageId(null);
+    }
+  }
+
+  function beginMessageEdit(messageId: string, text?: string) {
+    setEditingMessageId(messageId);
+    setEditingMessageText(text ?? "");
+  }
+
+  async function saveMessageEdit(messageId: string) {
+    if (savingMessageEditId) return;
+    const content = editingMessageText.trim();
+    if (!content) return;
+    const previous = messages.find((message) => message.id === messageId)?.text;
+    setSavingMessageEditId(messageId);
+    updateMessageText(messageId, content);
+    setEditingMessageId(null);
+    scrollChatToBottom(true);
+
+    // For unsaved chats (no chatId yet), just update the local text.
+    if (!chatId) {
+      setSavingMessageEditId(null);
+      return;
+    }
+
+    // Optimistically remove the old AI response and show typing indicator.
+    removeMessagesAfter(messageId);
+    setIsTyping(true);
+    scrollChatToBottom(true);
+
+    regenerateMessageMutation.mutate(
+      { chatId, messageId, content },
+      {
+        onSuccess: (result) => {
+          appendAiMessage(result.answer, result.sources);
+          // Replace the temporary client id with the persisted one.
+          setMessages((() => {
+            const current = useDocmindStore.getState().messages;
+            const last = current[current.length - 1];
+            return last?.role === "ai"
+              ? [...current.slice(0, -1), { ...last, id: result.assistantMessageId }]
+              : current;
+          })());
+          scrollChatToBottom(true);
+        },
+        onError: () => {
+          if (previous) updateMessageText(messageId, previous);
+          appendAiMessage(
+            "Sorry, something went wrong regenerating the response. Please try again."
+          );
+        },
+        onSettled: () => {
+          setSavingMessageEditId(null);
+          setIsTyping(false);
         },
       }
     );
@@ -582,74 +683,74 @@ const documents = allDocuments.filter(
     uploadPdfFiles(Array.from(e.dataTransfer.files || []));
   }
 
- function renderSelectableDocRow(document: any) {
-  const isSelected = selectedDocIds.includes(document.id);
-  return (
-    <div
-      className={`knowledge-doc-item ${isSelected ? "is-selected" : ""}`}
-      key={document.id}
-      onClick={() => toggleDocSelection(document.id)}
-      role="button"
-      tabIndex={0}
-      aria-pressed={isSelected}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          toggleDocSelection(document.id);
-        }
-      }}
-      style={{
-        width: "100%",
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "9px 10px",
-        border: "none",
-        background: isSelected ? "rgba(227, 242, 74, 0.1)" : "transparent",
-        color: "inherit",
-        textAlign: "left",
-        cursor: "pointer",
-      }}
-    >
-      <span
-        className="knowledge-doc-icon"
-        aria-hidden="true"
-        style={{ width: 12, height: 12, minWidth: 12, display: "grid", placeItems: "center", color: isSelected ? "var(--lime)" : "var(--text-muted)" }}
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ width: 12, height: 12, display: "block" }}>
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <path d="M14 2v6h6" />
-        </svg>
-      </span>
-
-      <span className="knowledge-doc-copy" style={{ minWidth: 0, flex: 1, display: "block" }}>
-        <span className="knowledge-doc-name" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, fontWeight: 500, color: isSelected ? "var(--lime)" : "var(--text-primary)" }}>{document.fileName}</span>
-        <span className="knowledge-doc-meta" style={{ display: "block", marginTop: 2, fontSize: 10.5, color: "var(--text-muted)" }}>
-          Ready{document.fileSize ? ` · ${formatBytes(document.fileSize)}` : ""}
-        </span>
-      </span>
-      <button
-        type="button"
-        aria-label={`Delete ${document.fileName}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          setDocumentToDelete(document);
-        }}
+  function renderSelectableDocRow(document: any) {
+    const isSelected = selectedDocIds.includes(document.id);
+    return (
+      <div
+        className={`knowledge-doc-item ${isSelected ? "is-selected" : ""}`}
+        key={document.id}
+        onClick={() => toggleDocSelection(document.id)}
+        role="button"
+        tabIndex={0}
+        aria-pressed={isSelected}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            e.stopPropagation();
-            setDocumentToDelete(document);
+            toggleDocSelection(document.id);
           }
         }}
-        style={{ border: 0, background: "transparent", color: "var(--text-muted)", fontSize: 17, lineHeight: 1, padding: "2px 4px", cursor: "pointer" }}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "9px 10px",
+          border: "none",
+          background: isSelected ? "rgba(227, 242, 74, 0.1)" : "transparent",
+          color: "inherit",
+          textAlign: "left",
+          cursor: "pointer",
+        }}
       >
-        ×
-      </button>
-    </div>
-  );
-}
-  
+        <span
+          className="knowledge-doc-icon"
+          aria-hidden="true"
+          style={{ width: 12, height: 12, minWidth: 12, display: "grid", placeItems: "center", color: isSelected ? "var(--lime)" : "var(--text-muted)" }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ width: 12, height: 12, display: "block" }}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path d="M14 2v6h6" />
+          </svg>
+        </span>
+
+        <span className="knowledge-doc-copy" style={{ minWidth: 0, flex: 1, display: "block" }}>
+          <span className="knowledge-doc-name" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, fontWeight: 500, color: isSelected ? "var(--lime)" : "var(--text-primary)" }}>{document.fileName}</span>
+          <span className="knowledge-doc-meta" style={{ display: "block", marginTop: 2, fontSize: 10.5, color: "var(--text-muted)" }}>
+            Ready{document.fileSize ? ` · ${formatBytes(document.fileSize)}` : ""}
+          </span>
+        </span>
+        <button
+          type="button"
+          aria-label={`Delete ${document.fileName}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setDocumentToDelete(document);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              e.stopPropagation();
+              setDocumentToDelete(document);
+            }
+          }}
+          style={{ border: 0, background: "transparent", color: "var(--text-muted)", fontSize: 17, lineHeight: 1, padding: "2px 4px", cursor: "pointer" }}
+        >
+          ×
+        </button>
+      </div>
+    );
+  }
+
 
   return (
     <div className="app">
@@ -690,12 +791,6 @@ const documents = allDocuments.filter(
               <path d="M4 17h16" />
             </svg>
           </button>
-          <button className="icon-btn" aria-label="Settings">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
         </div>
       </header>
 
@@ -729,12 +824,31 @@ const documents = allDocuments.filter(
               {messages.map((m) => (
                 <div className={`msg ${m.role}`} key={m.id}>
                   <div className={`msg-avatar ${m.role === "ai" ? "pixel" : ""}`}>
-                    {m.role === "ai" ? "AI" : <img src={userAvatar} alt="" />}
+                    {m.role === "ai" ? <AlienLogo className="chat-ai-logo" /> : <img src={userAvatar} alt="" />}
                   </div>
                   <div className="bubble-wrap">
                     <div className={`bubble ${m.role === "ai" ? "markdown-answer" : ""}`}>
                       {m.role === "ai" && m.text ? (
                         <ReactMarkdown>{m.text}</ReactMarkdown>
+                      ) : editingMessageId === m.id ? (
+                        <textarea
+                          className="message-edit-input"
+                          value={editingMessageText}
+                          onChange={(event) => setEditingMessageText(event.target.value)}
+                          disabled={savingMessageEditId === m.id}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") setEditingMessageId(null);
+                            if (
+                              event.key === "Enter" &&
+                              !event.shiftKey &&
+                              !event.nativeEvent.isComposing
+                            ) {
+                              event.preventDefault();
+                              void saveMessageEdit(m.id);
+                            }
+                          }}
+                          autoFocus
+                        />
                       ) : (
                         <>
                           {m.content}
@@ -760,6 +874,29 @@ const documents = allDocuments.filter(
                         </>
                       )}
                     </div>
+                    <div className="message-actions" aria-label="Message actions">
+                      {m.role === "user" && (editingMessageId === m.id ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={savingMessageEditId === m.id}
+                            onClick={() => void saveMessageEdit(m.id)}
+                          >
+                            {savingMessageEditId === m.id ? "Regenerating…" : (chatId ? "Save & Regenerate" : "Save")}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={savingMessageEditId === m.id}
+                            onClick={() => setEditingMessageId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" onClick={() => beginMessageEdit(m.id, m.text)}>Edit</button>
+                      ))}
+                      <button type="button" onClick={() => void copyMessage(m.id, m.text)}>{copiedMessageId === m.id ? "Copied" : "Copy"}</button>
+                    </div>
                     {m.role === "ai" && m.sources && m.sources.length > 0 && (
                       <div className="answer-sources" aria-label="Answer references">
                         <button type="button" onClick={() => setReferenceSources(m.sources ?? [])}>
@@ -778,7 +915,9 @@ const documents = allDocuments.filter(
                   role="status"
                   aria-label="Docmind is thinking"
                 >
-                  <div className="msg-avatar pixel">AI</div>
+                  <div className="msg-avatar" aria-label="Docmind is responding">
+                    <AlienLogo className="chat-ai-logo" />
+                  </div>
                   <TypingSpaceship />
                 </div>
               )}
@@ -864,18 +1003,18 @@ const documents = allDocuments.filter(
                 <span className="chat-mode">
                   {documentContextCount > 0
                     ? <>
-                        Document chat · {documentContextCount} active
-                        <button
-                          type="button"
-                          className="clear-document-context"
-                          onClick={() => {
-                            setSelectedDocIds([]);
-                            setActiveDocumentIds([]);
-                          }}
-                        >
-                          Ask generally
-                        </button>
-                      </>
+                      Document chat · {documentContextCount} active
+                      <button
+                        type="button"
+                        className="clear-document-context"
+                        onClick={() => {
+                          setSelectedDocIds([]);
+                          setActiveDocumentIds([]);
+                        }}
+                      >
+                        Ask generally
+                      </button>
+                    </>
                     : "General chat · select documents to ask about them"}
                 </span>
                 <span>
@@ -914,7 +1053,7 @@ const documents = allDocuments.filter(
                 </div>
                 <div className="profile-email">
                   {user?.email}
-                  
+
                 </div>
               </div>
             </button>
@@ -928,66 +1067,66 @@ const documents = allDocuments.filter(
                 </button>
               </div>
             )}
-            
+
           </div>
           <button type="button" className="new-chat-btn" onClick={startNewChat}>
             <span>+</span>
             Fresh start
           </button>
-<div className="knowledge-base-heading">
-  <div className="sidebar-section-label">Knowledge Base</div>
-  <input
-    ref={uploadInputRef}
-    type="file"
-    accept="application/pdf,.pdf"
-    multiple
-    hidden
-    onChange={(e) => {
-      uploadPdfFiles(Array.from(e.target.files || []));
-      e.target.value = "";
-    }}
-  />
-  <button
-    type="button"
-    className="knowledge-upload-btn"
-    aria-label="Upload PDF files"
-    title="Upload PDF files"
-    disabled={uploadFilesMutation.isPending}
-    onClick={() => uploadInputRef.current?.click()}
-  >
-    {uploadFilesMutation.isPending ? "…" : "+"}
-  </button>
-</div>
+          <div className="knowledge-base-heading">
+            <div className="sidebar-section-label">Knowledge Base</div>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              multiple
+              hidden
+              onChange={(e) => {
+                uploadPdfFiles(Array.from(e.target.files || []));
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              className="knowledge-upload-btn"
+              aria-label="Upload PDF files"
+              title="Upload PDF files"
+              disabled={uploadFilesMutation.isPending}
+              onClick={() => uploadInputRef.current?.click()}
+            >
+              {uploadFilesMutation.isPending ? "…" : "+"}
+            </button>
+          </div>
 
-<div className="knowledge-doc-list">
-  {isLoading && (
-    <div className="knowledge-doc-loading">
-      <span className="spinner" />
-      Updating library...
-    </div>
-  )}
+          <div className="knowledge-doc-list">
+            {isLoading && (
+              <div className="knowledge-doc-loading">
+                <span className="spinner" />
+                Updating library...
+              </div>
+            )}
 
-  {!isLoading && (
-    <div className="knowledge-doc-items">
-      {filteredDocuments.length === 0 ? (
-        <div className="knowledge-doc-empty">
-          {normalizedSearch ? "No PDF matches that clue." : "No ready documents yet"}
-        </div>
-      ) : (
-        visibleSidebarDocs.map((document: any) => renderSelectableDocRow(document))
-      )}
-    </div>
-  )}
+            {!isLoading && (
+              <div className="knowledge-doc-items">
+                {filteredDocuments.length === 0 ? (
+                  <div className="knowledge-doc-empty">
+                    {normalizedSearch ? "No PDF matches that clue." : "No ready documents yet"}
+                  </div>
+                ) : (
+                  visibleSidebarDocs.map((document: any) => renderSelectableDocRow(document))
+                )}
+              </div>
+            )}
 
-  {hasMoreDocs && (
-    <button
-      className="knowledge-view-all"
-      onClick={() => setShowAllDocsModal(true)}
-    >
-      View all {filteredDocuments.length} documents
-    </button>
-  )}
-</div>
+            {hasMoreDocs && (
+              <button
+                className="knowledge-view-all"
+                onClick={() => setShowAllDocsModal(true)}
+              >
+                View all {filteredDocuments.length} documents
+              </button>
+            )}
+          </div>
 
           <div>
             <div className="chat-history-heading">
@@ -1994,6 +2133,7 @@ const documents = allDocuments.filter(
           flex: 1;
           display: flex;
           min-height: 0;
+          overflow: hidden;
         }
 
         .chat-col {
@@ -2002,6 +2142,7 @@ const documents = allDocuments.filter(
           flex-direction: column;
           min-width: 0;
           border-right: 1px solid var(--border);
+          min-height: 0;
         }
 
         .chat-scroll {
@@ -2010,7 +2151,7 @@ const documents = allDocuments.filter(
           padding: var(--sp-4) 0;
           background-repeat: repeat;
           background-size: 260px 260px;
-          background-attachment: local;
+          background-attachment: fixed;
           background-color: var(--bg);
         }
         .chat-inner {
@@ -2083,7 +2224,12 @@ const documents = allDocuments.filter(
         .msg.ai .msg-avatar {
           background: var(--lime);
           color: var(--lime-text);
-          font-size: 8px;
+          padding: 5px;
+        }
+        .chat-ai-logo {
+          width: 100%;
+          height: 100%;
+          color: var(--lime-text);
         }
         .msg.user .msg-avatar {
           background: var(--surface-3);
@@ -2263,6 +2409,40 @@ const documents = allDocuments.filter(
           align-items: center;
           gap: 10px;
           height: 30px;
+        }
+        .message-actions {
+          display: flex;
+          gap: 8px;
+          padding: 0 4px;
+          opacity: 0;
+          transition: opacity 0.15s ease;
+        }
+        .bubble-wrap:hover .message-actions,
+        .message-actions:focus-within {
+          opacity: 1;
+        }
+        .message-actions button {
+          border: 0;
+          background: transparent;
+          color: var(--text-muted);
+          cursor: pointer;
+          font: inherit;
+          font-size: 11px;
+        }
+        .message-actions button:hover { color: var(--lime); }
+        .message-edit-input {
+          display: block;
+          width: min(460px, 100%);
+          min-height: 72px;
+          resize: vertical;
+          border: 1px solid var(--lime-dim);
+          border-radius: 7px;
+          background: var(--bg);
+          color: var(--text-primary);
+          font: inherit;
+          line-height: inherit;
+          outline: none;
+          padding: 8px;
         }
         .typing-message .typing-spaceship {
           width: 42px;

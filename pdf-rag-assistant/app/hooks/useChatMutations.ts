@@ -21,6 +21,21 @@ type SendMessageResponse = {
   answer: string;
   chatId: string;
   sources: AnswerSource[];
+  userMessageId: string;
+  assistantMessageId: string;
+};
+
+type RegenerateMessageData = {
+  chatId: string;
+  messageId: string;
+  content: string;
+};
+
+type RegenerateMessageResponse = {
+  answer: string;
+  sources: AnswerSource[];
+  userMessageId: string;
+  assistantMessageId: string;
 };
 
 async function sendMessageRequest(
@@ -37,6 +52,25 @@ async function sendMessageRequest(
 export function useSendMessageMutation() {
   return useMutation({
     mutationFn: sendMessageRequest,
+  });
+}
+
+async function regenerateMessageRequest({
+  chatId,
+  messageId,
+  content,
+}: RegenerateMessageData): Promise<RegenerateMessageResponse> {
+  const response = await axios.post<RegenerateMessageResponse>(
+    `/api/chats/${chatId}/messages/${messageId}/regenerate`,
+    { content }
+  );
+
+  return response.data;
+}
+
+export function useRegenerateMessageMutation() {
+  return useMutation({
+    mutationFn: regenerateMessageRequest,
   });
 }
 

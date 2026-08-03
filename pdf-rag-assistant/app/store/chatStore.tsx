@@ -74,7 +74,10 @@ interface DocmindState {
   setDragOver: (value: boolean) => void;
   setIsTyping: (value: boolean) => void;
   setMessages: (messages: Message[]) => void;
+  updateMessageText: (id: string, text: string) => void;
+  replaceMessageId: (id: string, persistedId: string) => void;
   removeDocumentAttachments: (documentId: string) => void;
+  removeMessagesAfter: (messageId: string) => void;
 
   sendMessage: () => void;
   submitUserMessage: (
@@ -96,6 +99,18 @@ export const useDocmindStore = create<DocmindState>((set, get) => ({
   setDragOver: (value) => set({ dragOver: value }),
   setIsTyping: (value) => set({ isTyping: value }),
   setMessages: (messages) => set({ messages, isTyping: false }),
+  updateMessageText: (id, text) =>
+    set((state) => ({
+      messages: state.messages.map((message) =>
+        message.id === id ? { ...message, text, content: <p>{text}</p> } : message
+      ),
+    })),
+  replaceMessageId: (id, persistedId) =>
+    set((state) => ({
+      messages: state.messages.map((message) =>
+        message.id === id ? { ...message, id: persistedId } : message
+      ),
+    })),
   removeDocumentAttachments: (documentId) =>
     set((state) => ({
       messages: state.messages.map((message) => ({
@@ -105,6 +120,12 @@ export const useDocmindStore = create<DocmindState>((set, get) => ({
         ),
       })),
     })),
+  removeMessagesAfter: (messageId) =>
+    set((state) => {
+      const index = state.messages.findIndex((m) => m.id === messageId);
+      if (index === -1) return state;
+      return { messages: state.messages.slice(0, index + 1) };
+    }),
 
   sendMessage: () => {
     const text = get().input.trim();
@@ -147,8 +168,8 @@ export const useDocmindStore = create<DocmindState>((set, get) => ({
   },
 
   // Optimistically pushes the composer text as a user message, clears
-  // the input, and returns the trimmed text (or null if empty) so the
-  // caller can kick off the React Query mutation with it.
+  // the input, and returns its temporary id (or null if empty). The chat
+  // page replaces that id with the persisted database id after sending.
   submitUserMessage: (attachedDocuments = []) => {
     const text = get().input.trim();
     if (!text) return null;
@@ -167,7 +188,7 @@ export const useDocmindStore = create<DocmindState>((set, get) => ({
       input: "",
     }));
 
-    return text;
+    return userMsg.id;
   },
 
   appendAiMessage: (text, sources = []) =>
