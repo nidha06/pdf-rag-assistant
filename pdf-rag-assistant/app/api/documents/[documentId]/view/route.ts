@@ -6,7 +6,7 @@ import { requireUser } from "@/lib/auth";
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "documents";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ documentId: string }> }
 ) {
   try {
@@ -34,7 +34,12 @@ export async function GET(
       throw new Error(error?.message ?? "Couldn't prepare the PDF preview");
     }
 
-    return NextResponse.redirect(data.signedUrl);
+    // Append #page=N so the browser's PDF viewer jumps to the cited page.
+    const url = new URL(request.url);
+    const page = url.searchParams.get("page");
+    const fragment = page ? `#page=${page}` : "";
+
+    return NextResponse.redirect(data.signedUrl + fragment);
   } catch (error) {
     console.error("Failed to open document preview:", error);
     return NextResponse.json(

@@ -208,6 +208,7 @@ export default function DocmindPage() {
   const [previewDocument, setPreviewDocument] = useState<{
     id: string;
     name: string;
+    page?: number;
   } | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingMessageText, setEditingMessageText] = useState("");
@@ -899,8 +900,36 @@ export default function DocmindPage() {
                     </div>
                     {m.role === "ai" && m.sources && m.sources.length > 0 && (
                       <div className="answer-sources" aria-label="Answer references">
-                        <button type="button" onClick={() => setReferenceSources(m.sources ?? [])}>
-                          View PDF source{m.sources.length === 1 ? "" : "s"} ({m.sources.length})
+                        {m.sources.map((source) => (
+                          <button
+                            key={source.id}
+                            type="button"
+                            className="citation-chip"
+                            title={`Open ${source.fileName} — Page ${source.pageNumber || "?"}`}
+                            onClick={() => {
+                              if (source.documentId) {
+                                setPreviewDocument({
+                                  id: source.documentId,
+                                  name: source.fileName,
+                                  page: source.pageNumber || undefined,
+                                });
+                              }
+                            }}
+                          >
+                            <span className="citation-icon" aria-hidden="true">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <path d="M14 2v6h6" />
+                              </svg>
+                            </span>
+                            <span className="citation-label">
+                              <span className="citation-file">{source.fileName}</span>
+                              <span className="citation-page">p.{source.pageNumber || "?"}</span>
+                            </span>
+                          </button>
+                        ))}
+                        <button type="button" className="citation-viewall" onClick={() => setReferenceSources(m.sources ?? [])}>
+                          View all sources
                         </button>
                       </div>
                     )}
@@ -1224,6 +1253,27 @@ export default function DocmindPage() {
                     <span>{Math.round(source.score * 100)}% match</span>
                   </div>
                   <blockquote>{source.excerpt}</blockquote>
+                  {source.documentId && (
+                    <button
+                      type="button"
+                      className="reference-open-pdf"
+                      onClick={() => {
+                        setReferenceSources(null);
+                        setPreviewDocument({
+                          id: source.documentId,
+                          name: source.fileName,
+                          page: source.pageNumber || undefined,
+                        });
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                        <path d="M15 3h6v6" />
+                        <path d="M10 14 21 3" />
+                      </svg>
+                      Open PDF
+                    </button>
+                  )}
                 </section>
               ))}
             </div>
@@ -1261,7 +1311,7 @@ export default function DocmindPage() {
             </header>
             <iframe
               className="pdf-preview-frame"
-              src={`/api/documents/${previewDocument.id}/view`}
+              src={`/api/documents/${previewDocument.id}/view${previewDocument.page ? `?page=${previewDocument.page}#page=${previewDocument.page}` : ''}`}
               title={`Preview of ${previewDocument.name}`}
             />
           </section>
@@ -2254,24 +2304,79 @@ export default function DocmindPage() {
           display: flex;
           flex-wrap: wrap;
           gap: 6px;
-          margin-top: 2px;
+          margin-top: 4px;
         }
-        .answer-sources button {
-          max-width: 100%;
-          padding: 5px 7px;
-          overflow: hidden;
-          border: 1px solid var(--lime-dim);
-          border-radius: 6px;
-          background: rgba(227, 242, 74, 0.07);
-          color: var(--lime);
+
+        /* Individual citation chip — links to original PDF */
+        .citation-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          max-width: 220px;
+          padding: 5px 10px 5px 6px;
+          border: 1px solid var(--border-strong);
+          border-radius: 8px;
+          background: var(--surface-2);
+          color: var(--text-primary);
           font: inherit;
-          font-size: 10px;
+          font-size: 11px;
+          cursor: pointer;
+          transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+        }
+        .citation-chip:hover {
+          border-color: var(--lime-dim);
+          background: rgba(227, 242, 74, 0.08);
+          box-shadow: 0 2px 8px rgba(227, 242, 74, 0.1);
+        }
+        .citation-icon {
+          width: 20px;
+          height: 20px;
+          min-width: 20px;
+          border-radius: 5px;
+          background: rgba(227, 242, 74, 0.14);
+          color: var(--lime);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .citation-icon svg {
+          width: 11px;
+          height: 11px;
+        }
+        .citation-label {
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+          line-height: 1.3;
+        }
+        .citation-file {
+          font-weight: 500;
+          color: var(--text-primary);
+          overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
-          cursor: pointer;
         }
-        .answer-sources button:hover {
-          background: rgba(227, 242, 74, 0.15);
+        .citation-page {
+          font-size: 10px;
+          color: var(--lime-dim);
+          font-weight: 500;
+        }
+        .citation-viewall {
+          align-self: center;
+          padding: 5px 8px;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          background: transparent;
+          color: var(--text-muted);
+          font: inherit;
+          font-size: 10px;
+          cursor: pointer;
+          transition: color 0.15s ease, border-color 0.15s ease;
+        }
+        .citation-viewall:hover {
+          color: var(--lime);
+          border-color: var(--lime-dim);
         }
         .msg.user .bubble-wrap {
           align-items: flex-end;
@@ -3237,6 +3342,30 @@ export default function DocmindPage() {
           font-size: 12px;
           font-weight: 650;
           cursor: pointer;
+        }
+        .reference-open-pdf {
+          display: inline-flex;
+          align-items: center;
+          align-self: flex-start;
+          gap: 5px;
+          padding: 5px 10px;
+          border: 1px solid var(--border-strong);
+          border-radius: 6px;
+          background: var(--surface);
+          color: var(--lime);
+          font: inherit;
+          font-size: 11px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background 0.15s ease, border-color 0.15s ease;
+        }
+        .reference-open-pdf:hover {
+          background: rgba(227, 242, 74, 0.1);
+          border-color: var(--lime-dim);
+        }
+        .reference-open-pdf svg {
+          width: 12px;
+          height: 12px;
         }
         .conversation-modal {
           width: min(100%, 360px);

@@ -11,6 +11,7 @@ type SendMessageData = {
 
 export type AnswerSource = {
   id: string;
+  documentId: string;
   fileName: string;
   pageNumber: number;
   score: number;

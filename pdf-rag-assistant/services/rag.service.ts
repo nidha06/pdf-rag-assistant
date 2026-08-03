@@ -67,6 +67,11 @@ export async function askSelectedDocuments({
       return {
         sourceId: `S${index + 1}`,
 
+        documentId:
+          typeof metadata?.documentId === "string"
+            ? metadata.documentId
+            : "",
+
         text:
           typeof metadata?.text === "string"
             ? metadata.text
@@ -168,6 +173,7 @@ ${question}
 
     sources: chunks.map((chunk) => ({
       id: chunk.sourceId,
+      documentId: chunk.documentId,
       fileName: chunk.fileName,
       pageNumber: chunk.pageNumber,
       score: chunk.score,

@@ -128,6 +128,7 @@ export async function POST(request: Request) {
     let answer: string;
     let sources: Array<{
       id: string;
+      documentId: string;
       fileName: string;
       pageNumber: number;
       score: number;

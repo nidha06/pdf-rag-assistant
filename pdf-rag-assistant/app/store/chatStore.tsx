@@ -22,6 +22,7 @@ export type Message = {
 
 export type MessageSource = {
   id: string;
+  documentId: string;
   fileName: string;
   pageNumber: number;
   score: number;
