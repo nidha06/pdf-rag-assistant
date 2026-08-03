@@ -23,6 +23,11 @@ type SignupPayload = {
   name: string;
   email: string;
   password: string;
+  otp: string;
+};
+
+type SendSignupOtpPayload = {
+  email: string;
 };
 
 type AuthUser = {
@@ -50,6 +55,21 @@ export const signinRequest = async (payload: LoginPayload): Promise<AuthUser> =>
   if (!response.data) throw new Error("Unable to establish your session. Please try again.");
   return response.data;
 };
+
+// ── Signup OTP email verification ────────────────────────────────────
+
+const sendSignupOtpRequest = async (payload: SendSignupOtpPayload): Promise<{ success: boolean }> => {
+  const response = await axios.post("/api/auth/send-signup-otp", payload);
+  return response.data;
+};
+
+export function useSendSignupOtpMutation() {
+  return useMutation({
+    mutationFn: sendSignupOtpRequest,
+  });
+}
+
+// ── Signup (now requires OTP) ────────────────────────────────────────
 
 export const signupRequest = async (payload: SignupPayload): Promise<AuthUser> => {
   try {

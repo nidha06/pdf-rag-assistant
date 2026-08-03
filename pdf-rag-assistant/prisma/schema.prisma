@@ -49,6 +49,18 @@ model PasswordResetOtp {
   @@index([resetTokenHash])
 }
 
+model SignupOtp {
+  id        String   @id @default(cuid())
+  email     String
+  otpHash   String
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([email, expiresAt])
+}
+
 model Document {
   id         String   @id @default(cuid())
   fileName   String

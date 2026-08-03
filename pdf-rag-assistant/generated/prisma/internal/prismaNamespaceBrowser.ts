@@ -53,6 +53,7 @@ export const AnyNull = runtime.AnyNull
 export const ModelName = {
   User: 'User',
   PasswordResetOtp: 'PasswordResetOtp',
+  SignupOtp: 'SignupOtp',
   Document: 'Document',
   Chat: 'Chat',
   Message: 'Message',
@@ -108,6 +109,19 @@ export const PasswordResetOtpScalarFieldEnum = {
 } as const
 
 export type PasswordResetOtpScalarFieldEnum = (typeof PasswordResetOtpScalarFieldEnum)[keyof typeof PasswordResetOtpScalarFieldEnum]
+
+
+export const SignupOtpScalarFieldEnum = {
+  id: 'id',
+  email: 'email',
+  otpHash: 'otpHash',
+  attempts: 'attempts',
+  expiresAt: 'expiresAt',
+  usedAt: 'usedAt',
+  createdAt: 'createdAt'
+} as const
+
+export type SignupOtpScalarFieldEnum = (typeof SignupOtpScalarFieldEnum)[keyof typeof SignupOtpScalarFieldEnum]
 
 
 export const DocumentScalarFieldEnum = {

@@ -155,9 +155,38 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(false);
   const [oauthProvider, setOauthProvider] = useState<"google" | "github" | null>(null);
+  const [emailError, setEmailError] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
 
   const toggleShowPassword = () => setShowPassword((v) => !v);
-  const canSubmit = email.trim().length > 0 && password.length > 0;
+
+  function validateEmail(value: string): string {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return "Email address is required.";
+    if (!trimmed.includes("@")) return "Please include an '@' in the email address.";
+    const [localPart, domain] = trimmed.split("@");
+    if (!localPart) return "Enter a valid part before '@'.";
+    if (!domain || !domain.includes(".")) return "Enter a complete email address (e.g. you@company.com).";
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    if (!emailRegex.test(trimmed)) return "This doesn't look like a valid email address.";
+    return "";
+  }
+
+  function handleEmailBlur() {
+    setEmailTouched(true);
+    setEmailError(validateEmail(email));
+  }
+
+  function handleEmailChange(value: string) {
+    setEmail(value);
+    // Clear the error as soon as the user starts fixing it
+    if (emailTouched) {
+      const err = validateEmail(value);
+      if (!err) setEmailError("");
+    }
+  }
+
+  const canSubmit = email.trim().length > 0 && password.length > 0 && !emailError;
 
   const loginMutation = useSigninMutation();
   const submitting = loginMutation.isPending;
@@ -201,6 +230,13 @@ export default function LoginPage() {
 
   function handleFormSubmit(e: React.SyntheticEvent) {
     e.preventDefault();
+    // Validate email on submit in case the user never blurred
+    const emailErr = validateEmail(email);
+    if (emailErr) {
+      setEmailError(emailErr);
+      setEmailTouched(true);
+      return;
+    }
     if (!canSubmit || submitting) return;
 
     loginMutation.mutate(
@@ -442,7 +478,7 @@ export default function LoginPage() {
               <label className="field-label" htmlFor="email">
                 Email
               </label>
-              <div className={`field ${email ? "filled" : ""}`}>
+              <div className={`field ${email ? "filled" : ""} ${emailTouched && emailError ? "field-invalid" : ""}`}>
                 <span className="field-ico">
                   <MailIcon />
                 </span>
@@ -452,9 +488,11 @@ export default function LoginPage() {
                   autoComplete="email"
                   placeholder="you@company.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => handleEmailChange(e.target.value)}
+                  onBlur={handleEmailBlur}
                 />
               </div>
+              {emailTouched && emailError && <div className="field-hint">{emailError}</div>}
 
               <div className="field-row">
                 <label className="field-label" htmlFor="password">
@@ -858,7 +896,24 @@ export default function LoginPage() {
           border-radius: var(--radius-sm);
           transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
         }
-        .field:focus-within {
+        .field.field-invalid {
+          border-color: #ff8a7a;
+          box-shadow: 0 0 0 3px rgba(255, 138, 122, 0.12);
+        }
+        .field-hint {
+          margin-top: 6px;
+          font-size: 11.5px;
+          color: #ff8a7a;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          animation: hint-appear 0.2s ease;
+        }
+        @keyframes hint-appear {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .field:focus-within:not(.field-invalid) {
           border-color: var(--lime-dim);
           background: var(--surface-2);
           box-shadow: 0 0 0 3px rgba(227, 242, 74, 0.14);

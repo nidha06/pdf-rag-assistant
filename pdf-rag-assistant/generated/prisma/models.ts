@@ -10,6 +10,7 @@
  */
 export type * from './models/User'
 export type * from './models/PasswordResetOtp'
+export type * from './models/SignupOtp'
 export type * from './models/Document'
 export type * from './models/Chat'
 export type * from './models/Message'

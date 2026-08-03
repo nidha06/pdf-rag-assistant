@@ -386,6 +386,7 @@ type FieldRefInputType<Model, FieldType> = Model extends never ? never : FieldRe
 export const ModelName = {
   User: 'User',
   PasswordResetOtp: 'PasswordResetOtp',
+  SignupOtp: 'SignupOtp',
   Document: 'Document',
   Chat: 'Chat',
   Message: 'Message',
@@ -408,7 +409,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "user" | "passwordResetOtp" | "document" | "chat" | "message" | "documentChunk" | "account" | "session" | "verificationToken"
+    modelProps: "user" | "passwordResetOtp" | "signupOtp" | "document" | "chat" | "message" | "documentChunk" | "account" | "session" | "verificationToken"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -557,6 +558,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         count: {
           args: Prisma.PasswordResetOtpCountArgs<ExtArgs>
           result: runtime.Types.Utils.Optional<Prisma.PasswordResetOtpCountAggregateOutputType> | number
+        }
+      }
+    }
+    SignupOtp: {
+      payload: Prisma.$SignupOtpPayload<ExtArgs>
+      fields: Prisma.SignupOtpFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.SignupOtpFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.SignupOtpFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload>
+        }
+        findFirst: {
+          args: Prisma.SignupOtpFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.SignupOtpFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload>
+        }
+        findMany: {
+          args: Prisma.SignupOtpFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload>[]
+        }
+        create: {
+          args: Prisma.SignupOtpCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload>
+        }
+        createMany: {
+          args: Prisma.SignupOtpCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.SignupOtpCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload>[]
+        }
+        delete: {
+          args: Prisma.SignupOtpDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload>
+        }
+        update: {
+          args: Prisma.SignupOtpUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload>
+        }
+        deleteMany: {
+          args: Prisma.SignupOtpDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.SignupOtpUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.SignupOtpUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload>[]
+        }
+        upsert: {
+          args: Prisma.SignupOtpUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$SignupOtpPayload>
+        }
+        aggregate: {
+          args: Prisma.SignupOtpAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateSignupOtp>
+        }
+        groupBy: {
+          args: Prisma.SignupOtpGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.SignupOtpGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.SignupOtpCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.SignupOtpCountAggregateOutputType> | number
         }
       }
     }
@@ -1149,6 +1224,19 @@ export const PasswordResetOtpScalarFieldEnum = {
 export type PasswordResetOtpScalarFieldEnum = (typeof PasswordResetOtpScalarFieldEnum)[keyof typeof PasswordResetOtpScalarFieldEnum]
 
 
+export const SignupOtpScalarFieldEnum = {
+  id: 'id',
+  email: 'email',
+  otpHash: 'otpHash',
+  attempts: 'attempts',
+  expiresAt: 'expiresAt',
+  usedAt: 'usedAt',
+  createdAt: 'createdAt'
+} as const
+
+export type SignupOtpScalarFieldEnum = (typeof SignupOtpScalarFieldEnum)[keyof typeof SignupOtpScalarFieldEnum]
+
+
 export const DocumentScalarFieldEnum = {
   id: 'id',
   fileName: 'fileName',
@@ -1460,6 +1548,7 @@ export type PrismaClientOptions = ({
 export type GlobalOmitConfig = {
   user?: Prisma.UserOmit
   passwordResetOtp?: Prisma.PasswordResetOtpOmit
+  signupOtp?: Prisma.SignupOtpOmit
   document?: Prisma.DocumentOmit
   chat?: Prisma.ChatOmit
   message?: Prisma.MessageOmit

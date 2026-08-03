@@ -10,7 +10,11 @@ export type IntentType = "document" | "general";
 
 /**
  * Fast keyword check that catches obvious greetings and chitchat before hitting
- * the LLM. Returns `true` for messages that are clearly not about a document.
+ * the LLM. Returns `true` only for messages that are clearly not about a document.
+ *
+ * IMPORTANT: This must NOT match messages that contain document-related keywords
+ * (e.g. "hello can we discuss this pdf?"). The greeting fast-path is limited to
+ * short messages (≤8 words) that don't mention documents.
  */
 function isObviousCasualMessage(question: string): boolean {
   const normalized = question
@@ -18,6 +22,16 @@ function isObviousCasualMessage(question: string): boolean {
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  // If the message mentions anything document-related, it's NOT casual
+  const docKeywords = [
+    "pdf", "document", "file", "page", "chapter", "section",
+    "paragraph", "table", "figure", "chart", "summarize",
+    "summary", "extract", "uploaded", "attached", "attachment",
+    "resume", "report", "paper", "article", "content",
+    "read", "analyze", "discuss",
+  ];
+  if (docKeywords.some((kw) => normalized.includes(kw))) return false;
 
   const exactMatches = new Set([
     "hi", "hello", "hey", "hai", "good morning", "good afternoon",
@@ -29,6 +43,11 @@ function isObviousCasualMessage(question: string): boolean {
   ]);
 
   if (exactMatches.has(normalized)) return true;
+
+  // Only treat prefix-greeting messages as casual if they're very short
+  // (≤8 words). Longer messages starting with "hello" are likely real questions.
+  const wordCount = normalized.split(/\s+/).length;
+  if (wordCount > 8) return false;
 
   return /^(hi|hello|hey|hai|thanks|thank you|bye|goodbye)\b/.test(normalized);
 }
@@ -108,6 +127,13 @@ export async function classifyIntent({
   if (!hasDocuments) {
     console.info(`${trace} no documents selected — general`);
     return "general";
+  }
+
+  // Fast path: when documents are selected and the message clearly references
+  // them, skip the LLM classifier and go straight to document mode.
+  if (isLikelyDocumentQuestion(question, history)) {
+    console.info(`${trace} fast-path: obvious document question with docs selected`);
+    return "document";
   }
 
   // Use Gemini to classify ambiguous questions
